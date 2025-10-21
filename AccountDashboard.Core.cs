@@ -14,6 +14,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -144,15 +145,19 @@ namespace NinjaTrader.AddOns
 			}
 		}
 
+
 		internal void InitializeAccounts()
 		{
-			CopierMgr.ClearAll();
+			// cache roles before reset
+			var savedRoles = Rows?.ToDictionary( r => r.AccountName, r => new { r.Role, r.Size } )
+							 ?? new();
 
 			/*if(Rows == null)
 				Rows = new ObservableCollection<AccountRow>();
 			if(Summaries == null)
 				Summaries = new ObservableCollection<SummaryRow>();*/
 
+			CopierMgr.ClearAll();
 			Rows.Clear();
 			Summaries.Clear();
 
@@ -168,6 +173,22 @@ namespace NinjaTrader.AddOns
 					
 				//Print( $"Add new row {a.Name}");
 				var row = new AccountRow( a, canChangeRole: _ => true, onRoleClick: OnRoleButtonClicked );
+
+				// restore previous role and size if available
+				if(savedRoles.TryGetValue( a.Name, out var saved ))
+				{
+					row.Role = saved.Role;
+					row.Size = saved.Size;
+					if(row.Role == RowRole.Master)
+					{
+						CopierMgr.SetMaster( row.Acct );
+					}
+					else if(row.Role == RowRole.Follower)
+					{
+						CopierMgr.AddFollower( row.Acct );
+					}
+				}
+
 				Rows.Add( row );
 
 				//Print( $"Assign values to Account {a.Name}" );
