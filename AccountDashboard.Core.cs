@@ -243,7 +243,7 @@ namespace NinjaTrader.AddOns
 			{
 				connectionTimer = new DispatcherTimer( DispatcherPriority.Background )
 				{
-					Interval = TimeSpan.FromSeconds( 3 )
+					Interval = TimeSpan.FromSeconds( 1 )
 				};
 				connectionTimer.Tick += ( s, e ) => CheckConnections();
 				connectionTimer.Start();
@@ -300,7 +300,8 @@ namespace NinjaTrader.AddOns
 				{
 					//Print( "DoReinitAndPulseAdds" );
 					InitializeAccounts();
-					SafeDispatchAsync( () =>
+					Application.Current?.Dispatcher.Invoke( () =>
+					//SafeDispatchAsync( () =>
 					{
 						foreach(var r in Rows.Where( x => added.Contains( x.AccountName ) ))
 							PulseRow( r, ADTheme.ConnectRow );
@@ -333,6 +334,12 @@ namespace NinjaTrader.AddOns
 				}
 
 				prevAccounts = live;
+
+				Application.Current?.Dispatcher.InvokeAsync( () =>
+				//SafeDispatchAsync( () =>
+				{
+					View.Refresh();
+				}, DispatcherPriority.Normal );
 			}
 			catch(Exception ex)
 			{
@@ -377,98 +384,6 @@ namespace NinjaTrader.AddOns
 			}
 		}
 
-		// NOT WORKING. Rows won't disappear 
-		void PulseRow___( AccountRow row, Color color, Action onCompleted = null )
-		{
-			try
-			{
-				if(row.RowRef == null)
-				{
-					ADLog.Write( $"PulseRow: no row reference for {row.AccountName}" );
-					return;
-				}
-
-				var dgr = row.RowRef;
-				var baseColor = ((SolidColorBrush)ADTheme.RowBg).Color;
-				var brush = new SolidColorBrush( baseColor );
-				dgr.Background = brush;
-
-				// set pulse color
-				//brush.Color = color;
-
-				Print( "Start color change" );
-				// revert after N milliseconds
-				System.Threading.Tasks.Task.Delay( 66 * 3 ).ContinueWith( _ =>
-				{
-					Print( "END color change" );
-					//Application.Current.Dispatcher.Invoke( () =>
-					//{
-					//brush.Color = baseColor;
-					dgr.Background = ADTheme.RowBg;
-					onCompleted();
-					//} );
-				} );
-			}
-			catch(Exception ex)
-			{
-				ADLog.Write( $"PulseRow error: {ex.Message}" );
-			}
-		}
-
-
-
-		void CheckConnections22()
-		{
-			try
-			{
-				bool refreshNeeded = false;
-
-				foreach(var r in Rows)
-				{
-					if(r.Acct == null)
-						continue;
-
-					var status = r.Acct.ConnectionStatus;
-
-					// disconnected -> gray out row
-					if(status != ConnectionStatus.Connected)
-					{
-						if(r.Role != RowRole.None)
-							r.Role = RowRole.None; // clear role if account lost
-						r.Hidden = false;          // keep visible
-						refreshNeeded = true;
-					}
-				}
-
-				if(refreshNeeded)
-				{
-					//Print( "refresh needed view" );
-					// Invoke done when calling this. No need to call it here
-					//Application.Current.Dispatcher.Invoke( () =>
-					//{
-						View?.Refresh();
-						RecalcSummaries();
-					//} );
-				}
-
-				// detect new connections and re-init if accounts changed
-				var live = Account.All.Where( a => a.ConnectionStatus == ConnectionStatus.Connected ).ToList();
-				if(live.Count != Rows.Count)
-				{
-					//Print( "Account list changed, refreshing dashboard." );
-					ADLog.Write( "Account list changed, refreshing dashboard." );
-					// Invoke done when calling this. No need to call it here
-					//Application.Current.Dispatcher.Invoke( () =>
-					//{
-						InitializeAccounts();
-					//} );
-				}
-			}
-			catch(Exception ex)
-			{
-				ADLog.Write( $"CheckConnections error: {ex.Message}" );
-			}
-		}
 
 		// Risk enforcement entrypoint (guarded by RiskEnabled)
 		void EnforceRisk(AccountRow r)
@@ -871,7 +786,7 @@ namespace NinjaTrader.AddOns
 				disp.Invoke( action, priority );
 		}
 
-		void SafeDispatchAsync( Action action, DispatcherPriority priority )
+		void SafeDispatchAsync( Action action, DispatcherPriority priority = DispatcherPriority.Background )
 		{
 			if(action == null)
 				return;
