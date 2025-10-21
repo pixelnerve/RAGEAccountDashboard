@@ -35,7 +35,7 @@ namespace NinjaTrader.AddOns
 			Caption = "RAGE Account Dashboard";
 
 			// Set the initial dimensions of the window
-			Width = 1280;
+			Width = 1180;
 			Height = 720;
 		}
 
@@ -681,7 +681,6 @@ namespace NinjaTrader.AddOns
 				if(!hasMaster)
 				{ 
 					copierBorder.Background = Brushes.DimGray;
-					copierEnabled = false;
 				}
 				else
 					copierBorder.Background = copierEnabled ? Brushes.LimeGreen : Brushes.IndianRed;

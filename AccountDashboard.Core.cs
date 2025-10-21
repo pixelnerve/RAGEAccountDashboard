@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 using System;
@@ -160,6 +161,7 @@ namespace NinjaTrader.AddOns
 				if(a.ConnectionStatus != ConnectionStatus.Connected)
 					continue;
 
+				a.PositionUpdate += OnPositionUpdate;
 				a.AccountItemUpdate += OnAccountItemUpdate;
 				a.ExecutionUpdate += OnExecutionUpdate;
 				//a.OrderUpdate += OnOrderUpdate;
@@ -244,6 +246,7 @@ namespace NinjaTrader.AddOns
 			CopierMgr.ClearAll();
 			foreach(var r in Rows)
 			{
+				r.Acct.PositionUpdate -= OnPositionUpdate;
 				r.Acct.AccountItemUpdate -= OnAccountItemUpdate;
 				r.Acct.ExecutionUpdate -= OnExecutionUpdate;
 				//r.Acct.OrderUpdate -= OnOrderUpdate;
@@ -672,19 +675,103 @@ namespace NinjaTrader.AddOns
 					Print( $"OnAccountItemUpdate UI error: {ex.Message}" );
 					ADLog.Write($"OnAccountItemUpdate UI error: {ex.Message}"); 
 				}
-            }, DispatcherPriority.Background);
+            }, DispatcherPriority.Normal);
         }
 
-        void OnExecutionUpdate(object sender, ExecutionEventArgs e)
+
+		private void OnPositionUpdate( object sender, PositionEventArgs e )
+		{
+			Account acct = sender as Account; if(acct == null) return;
+			var row = Rows.FirstOrDefault( r => r.Acct == acct ); if(row == null) return;
+
+			//CopierMgr?.HandleExecutionUpdate( acct, e );
+			//try { Copier_OnExecutionUpdate( acct, e ); }
+			//catch(Exception ex) { ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" ); }
+
+			Application.Current?.Dispatcher?.Invoke( () =>
+			{
+				try
+				{
+					var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Position.Instrument );
+					if(pos != null)
+					{
+						row.Dir = pos.MarketPosition;
+						row.Pos = row.Dir == MarketPosition.Long ? pos.Quantity : -pos.Quantity;
+						//row.Pos = Math.Abs( pos.Quantity );
+						row.Qty = Math.Abs( pos.Quantity );
+					}
+					else
+					{
+						row.Dir = MarketPosition.Flat;
+						row.Pos = 0;
+						row.Qty = 0;
+					}
+
+					double unrl = 0;
+					try { if(pos != null) unrl = pos.GetUnrealizedProfitLoss( PerformanceUnit.Currency ); } catch { }
+					if(Math.Abs( unrl - row.LastUnrl ) > EPS) { row.Unrealized = unrl; row.LastUnrl = unrl; }
+
+					var newNet = row.CashValue + row.Unrealized;
+					if(Math.Abs( newNet - row.LastNet ) > EPS) { row.NetLiq = newNet; row.LastNet = newNet; }
+
+					EnforceRisk( row );
+
+					// Force UI update
+					View.Refresh();
+				}
+				catch(Exception ex) { ADLog.Write( $"OnPositionUpdate UI error: {ex.Message}" ); }
+			}, DispatcherPriority.Normal );
+		}
+
+
+		void OnExecutionUpdate__( object sender, ExecutionEventArgs e )
+		{
+			if(e == null || e.Execution == null)
+				return;
+
+			try
+			{
+				var acct = sender as Account;
+				var row = Rows.FirstOrDefault( r => r.Acct == acct );
+				if(row == null)
+					return;
+
+				// Recalculate position quantity and direction
+				var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Execution.Instrument );
+				if(pos == null || pos.Quantity == 0)
+				{
+					row.Dir = MarketPosition.Flat;
+					row.Pos = 0;
+					//row.Qty = 0;
+				}
+				else
+				{
+					row.Dir = pos.MarketPosition;
+					row.Pos = Math.Abs( pos.Quantity );
+					//row.Qty = Math.Abs( pos.Quantity );
+				}
+
+				//Print( acct.Name + " -- " + row.Dir + ", " + row.Pos + ", " + row.Qty );
+
+				// Force UI update
+				Application.Current.Dispatcher.Invoke( () => View.Refresh() );
+			}
+			catch(Exception ex)
+			{
+				ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" );
+			}
+		}
+
+		void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
-            Account acct = sender as Account; if (acct == null) return;
+            /*Account acct = sender as Account; if (acct == null) return;
             var row = Rows.FirstOrDefault(r => r.Acct == acct); if (row == null) return;
 
 			//CopierMgr?.HandleExecutionUpdate( acct, e );
 			//try { Copier_OnExecutionUpdate( acct, e ); }
 			//catch(Exception ex) { ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" ); }
 
-			Application.Current?.Dispatcher?.InvokeAsync(() =>
+			Application.Current?.Dispatcher?.Invoke(() =>
             {
                 try
                 {
@@ -693,11 +780,13 @@ namespace NinjaTrader.AddOns
 					{
 						row.Dir = pos.MarketPosition;
 						row.Pos = Math.Abs( pos.Quantity );
+						row.Qty = Math.Abs( pos.Quantity );
 					}
 					else
 					{
 						row.Dir = MarketPosition.Flat;
 						row.Pos = 0;
+						row.Qty = 0;
 					}
 
                     double unrl = 0;
@@ -708,9 +797,12 @@ namespace NinjaTrader.AddOns
                     if (Math.Abs(newNet - row.LastNet) > EPS) { row.NetLiq = newNet; row.LastNet = newNet; }
 
                     EnforceRisk(row);
-                }
-                catch (Exception ex) { ADLog.Write($"OnExecutionUpdate UI error: {ex.Message}"); }
-            }, DispatcherPriority.Background);
+
+					// Force UI update
+					View.Refresh();
+				}
+				catch (Exception ex) { ADLog.Write($"OnExecutionUpdate UI error: {ex.Message}"); }
+            }, DispatcherPriority.Background);*/
         }
 
         // Copying of market orders will be handled in the Copier partial (stubbed here to keep signatures)
