@@ -304,7 +304,9 @@ namespace NinjaTrader.AddOns
 					//SafeDispatchAsync( () =>
 					{
 						foreach(var r in Rows.Where( x => added.Contains( x.AccountName ) ))
+						{
 							PulseRow( r, ADTheme.ConnectRow );
+						}
 					}, DispatcherPriority.Normal );
 				}
 
