@@ -1,6 +1,5 @@
-﻿#region using
+#region using
 using NinjaTrader.Cbi;
-using NinjaTrader.Custom.AddOns;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
@@ -109,8 +108,10 @@ namespace NinjaTrader.AddOns
 		NTMenuItem ccNewMenu;
 		NTMenuItem myMenuItem;
 
-		bool showSim = true; // track toggle state
+		bool showSim = false; // track toggle state
 		bool copierEnabled = false;
+
+		bool groupByConnectionEnabled = false;
 
 		public WorkspaceOptions WorkspaceOptions
 		{
@@ -189,6 +190,9 @@ namespace NinjaTrader.AddOns
 						// Populate and subscribe when the window actually opens
 						//Print( "Dash Loaded" );
 						InitializeAccounts();
+
+						//ApplyGroupingSafe();
+						//View.Refresh();
 					};
 
 					dash.Closed += ( s3, e3 ) =>
@@ -293,6 +297,12 @@ namespace NinjaTrader.AddOns
 
 			bar.Children.Add( simToggle );
 
+			var groupToggle = new CheckBox { Content = "Group by Connection", Margin = new Thickness( 0, 0, 8, 0 ), Foreground = ADTheme.Fore };
+			groupToggle.Checked += ( s, e ) => { groupByConnectionEnabled = true; ApplyGroupingSafe(); };
+			groupToggle.Unchecked += ( s, e ) => { groupByConnectionEnabled = false; ApplyGroupingSafe(); };
+			bar.Children.Add( groupToggle );
+
+
 			Grid.SetRow(bar, 0); root.Children.Add(bar);
 
 			// Main grid
@@ -310,7 +320,6 @@ namespace NinjaTrader.AddOns
 				Background = ADTheme.RowBg,
 				BorderThickness = new Thickness( 0 )
 			};
-
 
 			dg.LoadingRow += ( s, e ) =>
 			{
@@ -460,6 +469,41 @@ namespace NinjaTrader.AddOns
 			} );
 			//dg.Columns.Add(ButtonCol("-", "RoleButtonCmd", 40));
 
+
+			// Account type color indicator
+			//
+			var typeTpl = new DataTemplate();
+			var border = new FrameworkElementFactory( typeof( Border ) );
+			border.SetValue( Border.PaddingProperty, new Thickness( 0 ) ); // new Thickness( 2, 0, 2, 0 ) );
+			border.SetValue( Border.MarginProperty, new Thickness( 0 ) ); // new Thickness( 2, 0, 2, 0 ) );
+			border.SetValue( Border.WidthProperty, 6.0 );
+			border.SetValue( Border.HeightProperty, 24.0 );
+			//border.SetValue( Border.CornerRadiusProperty, new CornerRadius( 3 ) );
+
+			// background color depends on AccountName content
+			var bc = new Binding( "AccountName" )
+			{
+				Converter = new AccountTypeColorConverter()
+			};
+			border.SetBinding( Border.BackgroundProperty, bc );
+
+			// make header background transparent for specific columns
+			var transparentHeaderStyle = new Style( typeof( DataGridColumnHeader ) );
+			transparentHeaderStyle.Setters.Add( new Setter( Control.BackgroundProperty, Brushes.Transparent ) );
+			transparentHeaderStyle.Setters.Add( new Setter( Control.BorderBrushProperty, Brushes.Transparent ) );
+			transparentHeaderStyle.Setters.Add( new Setter( Control.ForegroundProperty, Brushes.Transparent ) );
+			transparentHeaderStyle.Setters.Add( new Setter( Control.HeightProperty, 24.0 ) );
+
+			typeTpl.VisualTree = border;
+			dg.Columns.Add( new DataGridTemplateColumn
+			{
+				Header = string.Empty,
+				CellTemplate = typeTpl,
+				MaxWidth = 4,
+				Width = 4,
+				//HeaderStyle = transparentHeaderStyle,
+			} );
+
 			// Account
 			dg.Columns.Add(TextReadOnlyCol("Account", "AccountName", 180));
 
@@ -547,7 +591,7 @@ namespace NinjaTrader.AddOns
 			dg.Columns.Add(MoneyCol("Unrealized", "Unrealized", true));
             dg.Columns.Add(MoneyCol("Realized", "Realized", true));
 			dg.Columns.Add( MoneyCol( "Total P&L", "TotalPnL", true ) );
-			dg.Columns.Add(MoneyCol("Commissions", "Commissions", false));
+			//dg.Columns.Add(MoneyCol("Commissions", "Commissions", false));
 			dg.Columns.Add(MoneyCol("Cash Value", "CashValue", false));
             //dg.Columns.Add(MoneyCol("Net Liquidation", "NetLiq", false));
 			dg.Columns.Add( MoneyCol( "Max Drawdown", "TrailingMaxDrawdown", false ) );
@@ -634,8 +678,19 @@ namespace NinjaTrader.AddOns
 			sum.RowHeight = 24;
 
 			sum.Columns.Add( IntReadOnlyCol( "Accounts", "AccountCount", 40, TextAlignment.Center));
+
+			sum.Columns.Add( new DataGridTemplateColumn
+			{
+				Header = string.Empty,
+				CellTemplate = typeTpl,
+				MaxWidth = 4,
+				Width = 4,
+				//HeaderStyle = transparentHeaderStyle,
+			} );
+
             sum.Columns.Add(TextReadOnlyCol("Connection", "Label", 180 ) );
 			sum.Columns.Add(TextReadOnlyCol( "Size", "-", 40 ));
+
 
 			// Pos with background
 			var posTplS = new DataTemplate();
@@ -651,25 +706,77 @@ namespace NinjaTrader.AddOns
 			posBorderS.AppendChild( posTextS );
 			posTplS.VisualTree = posBorderS;
 			sum.Columns.Add( new DataGridTemplateColumn { Header = "TotalPos", CellTemplate = posTplS, Width = 40 } );
+			// Style for the TotalPos bg tint
+			var sumRowStyle = new Style( typeof( DataGridRow ) );
+			sumRowStyle.Setters.Add( new Setter( Control.BackgroundProperty,
+				new Binding( "Dir" ) { Converter = new PosBackgroundConverter() } ) );
+			sum.RowStyle = sumRowStyle;
+
 
 			sum.Columns.Add(MoneyCol("Unrealized", "TotalUnrealized", true));
             sum.Columns.Add(MoneyCol("Realized", "TotalRealized", true));
 			sum.Columns.Add(MoneyCol("Total PNL", "TotalPnL", true));
-            sum.Columns.Add(MoneyCol("Commissions", "TotalComms", false));
+            //sum.Columns.Add(MoneyCol("Commissions", "TotalComms", false));
             sum.Columns.Add(MoneyCol("Cash Value", "TotalCash", false));
-            //sum.Columns.Add(MoneyCol("Net Liq", "TotalNetLiq", false));
+			//sum.Columns.Add(MoneyCol("Net Liq", "TotalNetLiq", false));
 			//sum.Columns.Add( MoneyCol( "Max Drawdown", "-", false ) );
 			//sum.Columns.Add( MoneyCol( "Auto Liquidate", "-", false ) );
 			//sum.Columns.Add( MoneyCol( "Daily Loss", "-", false ) );
 			//sum.Columns.Add( MoneyCol( "Daily Gain", "-", false ) );
 			//sum.Columns.Add( TextReadOnlyCol( "Risk", "-", 100 ) );
 			//sum.Columns.Add( MoneyCol( "Risk", "-", false ) );
-			
-            Grid.SetRow(sum, 3);
+
+			Grid.SetRow(sum, 3);
             root.Children.Add(sum);
 
 			// must be the same ObservableCollection<AccountRow> used in InitializeAccounts()
 			dg.ItemsSource = Rows;
+
+
+			// after setting ItemsSource
+			/*View = CollectionViewSource.GetDefaultView( Rows );
+			View.Filter = o => o is AccountRow r && !r.Hidden;
+
+			// grouping toggle
+			groupToggle.Checked += ( s, e ) =>
+			{
+				groupByConnectionEnabled = true;
+				View.GroupDescriptions.Clear();
+				View.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+
+				var VisualTree = new FrameworkElementFactory( typeof( TextBlock ), "header" );
+				VisualTree.SetBinding( TextBlock.TextProperty, new Binding( "Name" ) );
+				VisualTree.SetValue( TextBlock.FontWeightProperty, FontWeights.Bold );
+				VisualTree.SetValue( TextBlock.FontSizeProperty, 12.0 );
+				VisualTree.SetValue( TextBlock.ForegroundProperty, Brushes.White );
+				VisualTree.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
+				VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
+				//VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 4, 8, 0, 2 ) );
+
+				dg.GroupStyle.Clear();
+				dg.GroupStyle.Add( new GroupStyle
+				{
+					HeaderTemplate = new DataTemplate
+					{
+						VisualTree = VisualTree
+					},
+					// optional: add padding or hide group borders
+					ContainerStyle = new Style( typeof( GroupItem ) )
+					{
+						Setters = { new Setter( Control.MarginProperty, new Thickness( 0 ) ), new Setter( Control.PaddingProperty, new Thickness( 0 ) ) }
+					}
+				} );
+				View.Refresh();
+			};
+
+			// ungroup
+			groupToggle.Unchecked += ( s, e ) =>
+			{
+				groupByConnectionEnabled = false;
+				View.GroupDescriptions.Clear();
+				dg.GroupStyle.Clear();
+				View.Refresh();
+			};*/
 
 
 			// FOR COPIER STATE

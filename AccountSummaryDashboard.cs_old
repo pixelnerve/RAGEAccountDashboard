@@ -1,0 +1,453 @@
+#region Using declarations
+using NinjaTrader.Cbi;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.Design;
+using System.Linq;
+using System.Security.Policy;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Forms;
+using System.Windows.Media;
+using System.Windows.Threading;
+
+#endregion
+
+namespace NinjaTrader.Custom.AddOns
+{
+	public class AccountSummaryDashboardWindow : NTWindow
+	{
+		private Grid grid;
+		private DispatcherTimer timer;
+
+		string[] Headers = { "Account", "Unrealized", "Max Drawdown", "Net Liq", "Total PNL" };
+		//string[] Headers = { "Account", "Pos", "Unrealized", "Max Drawdown", "Net Liq", "Total PNL" };
+
+		public AccountSummaryDashboardWindow()
+		{
+			Title = "Account Summary";
+			Width = 750;
+			Height = 700;
+			Background = new SolidColorBrush( Color.FromRgb( 33, 33, 33 ) );
+
+			grid = new Grid
+			{
+				Background = new SolidColorBrush( Color.FromRgb( 33, 33, 33 ) ),
+				Margin = new Thickness( 5 ),
+			};
+			for(int i = 0; i < Headers.Length; i++)
+			{
+				grid.ColumnDefinitions.Add( new ColumnDefinition() );
+			}
+
+			AddHeader();
+
+			Content = new ScrollViewer 
+			{ 
+				Content = grid,
+				VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+				HorizontalScrollBarVisibility = ScrollBarVisibility.Auto
+			};
+			StartTimer();
+		}
+
+
+		string MapConnectionName( string connectionName )
+		{
+			if(connectionName.Contains( "TPT" ) ) return "Take Profit Trader";
+			if(connectionName.Contains( "TDFY" ) ) return "Tradeify";
+			if(connectionName.Contains( "FT" )) return "Funding Ticks";
+			if(connectionName.Contains( "MFFU" )) return "My Funded Futures";
+			if(connectionName.Contains( "FFN" )) return "Funded Futures Network";
+			return connectionName;
+		}
+
+		private void AddHeader()
+		{
+			grid.RowDefinitions.Add( new RowDefinition { Height = GridLength.Auto } );
+			for(int i = 0; i < Headers.Length; i++)
+			{
+				var tb = new TextBlock
+				{
+					Text = Headers[ i ],
+					Foreground = Brushes.White,
+					FontWeight = FontWeights.Bold,
+					Margin = new Thickness( 6, 3, 6, 3 )
+				};
+				Grid.SetRow( tb, 0 );
+				Grid.SetColumn( tb, i );
+				grid.Children.Add( tb );
+			}
+		}
+
+		private void StartTimer()
+		{
+			timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds( 1 ) };
+			timer.Tick += ( s, e ) => RefreshData();
+			timer.Start();
+		}
+
+		private void RefreshData()
+		{
+			while(grid.RowDefinitions.Count > 1)
+			{
+				grid.RowDefinitions.RemoveAt( 1 );
+			}
+			var children = grid.Children.OfType<UIElement>().Where( c => Grid.GetRow( c ) > 0 ).ToList();
+			foreach(var c in children)
+			{
+				grid.Children.Remove( c );
+			}
+
+			int row = 1;
+
+			var grouped = Account.All
+				.Where( a => a.ConnectionStatus == ConnectionStatus.Connected && !a.Name.StartsWith( "Sim" ) )
+				.Where( a => a.GetAccountItem( AccountItem.TrailingMaxDrawdown, Currency.UsDollar ).Value >= 0 )
+				.GroupBy( a => a.Connection.Options?.Name ?? "Unknown" )
+				.OrderBy( g => g.Key );
+
+			Dictionary<string, (double Net, double Pnl)> totals = new Dictionary<string, (double, double)>();
+			double grandNet = 0;
+			double grandPnl = 0;
+
+			// list accounts by firm
+			foreach(var g in grouped)
+			{
+				string propName = MapConnectionName( g.Key );
+				AddRow( propName, "", "", "", "", "", Brushes.White, row, true );
+				row++;
+
+				double firmNet = 0;
+				double firmPnl = 0;
+
+				// { "Account", "Pos", "Unrealized", "Net Liq", "Max Trailing Drawdown", "Total PNL" };
+				foreach(var a in g)
+				{
+					double unreal = a.Get( AccountItem.UnrealizedProfitLoss, Currency.UsDollar );
+					double realized = a.Get( AccountItem.RealizedProfitLoss, Currency.UsDollar );
+					double pnl = unreal + realized;
+					double net = a.Get( AccountItem.NetLiquidation, Currency.UsDollar );
+					double maxDD = a.Get( AccountItem.TrailingMaxDrawdown, Currency.UsDollar );
+					if(double.IsNaN( net ) || net == 0)
+						net = a.Get( AccountItem.CashValue, Currency.UsDollar );
+
+					firmNet += net;
+					firmPnl += pnl;
+
+					AddRow(
+						"  " + a.Name,
+						//"0",
+						"$" + unreal.ToString( "N2" ),
+						"$" + maxDD.ToString( "N2" ),
+						"$" + net.ToString( "N2" ),
+						"$" + pnl.ToString( "N2" ),
+						pnl > 0 ? Brushes.LimeGreen : pnl < 0 ? Brushes.Red : Brushes.White,
+						row++
+					);
+				}
+
+				totals[ g.Key ] = (firmNet, firmPnl);
+				grandNet += firmNet;
+				grandPnl += firmPnl;
+			}
+
+			// blank spacer row
+			AddRow( "", "", "", "", "", Brushes.White, row++ );
+			AddRow( "", "", "", "", "", Brushes.White, row++ );
+			AddRow( "ACCOUNT TOTALS", "", "", "", "", Brushes.White, row++, true );
+
+			foreach(var kv in totals)
+			{
+				string propName = MapConnectionName( kv.Key );
+				double pnl = kv.Value.Pnl;
+				AddRow( "  " + propName, "", "", "$" + kv.Value.Net.ToString( "N2" ), "$" + kv.Value.Pnl.ToString( "N2" )
+					//, pnl > 0 ? Brushes.LimeGreen : pnl < 0 ? Brushes.Red : Brushes.White
+					, Brushes.White
+					, row++, true );
+			}
+
+			AddRow( "", "", "", "", "", Brushes.White, row++ );
+			AddRow( "TOTAL", "", "", "$" + grandNet.ToString( "N2" ), "$" + grandPnl.ToString( "N2" ),
+				Brushes.White, row++, true );
+
+			//Print("");
+		}
+
+		void Print( string text )
+		{
+			//NinjaTrader.Code.Output.Process( text, NinjaTrader.Code.Output. );
+		}
+
+		private void AddRow( string c1, string c2, string c3, string c4, string c5, Brush color, int row, bool bold = false )
+		{
+			grid.RowDefinitions.Add( new RowDefinition { Height = GridLength.Auto } );
+			string[] vals = { c1, c2, c3, c4, c5 };
+			for(int i = 0; i < vals.Length; i++)
+			{
+				var tb = new TextBlock
+				{
+					Text = vals[ i ],
+					Foreground = color,
+					FontWeight = bold ? FontWeights.Bold : FontWeights.Normal,
+					Margin = new Thickness( 6, 2, 6, 2 )
+				};
+				Grid.SetRow( tb, row );
+				Grid.SetColumn( tb, i );
+				grid.Children.Add( tb );
+			}
+		}
+
+		private void AddRow( string c1, string c2, string c3, string c4, string c5, string c6, Brush color, int row, bool bold = false )
+		{
+			grid.RowDefinitions.Add( new RowDefinition { Height = GridLength.Auto } );
+			string[] vals = { c1, c2, c3, c4, c5, c6 };
+			for(int i = 0; i < vals.Length; i++)
+			{
+				var tb = new TextBlock
+				{
+					Text = vals[ i ],
+					Foreground = color,
+					FontWeight = bold ? FontWeights.Bold : FontWeights.Normal,
+					Margin = new Thickness( 6, 2, 6, 2 )
+				};
+				Grid.SetRow( tb, row );
+				Grid.SetColumn( tb, i );
+				grid.Children.Add( tb );
+			}
+		}
+	}
+
+
+	public class AccountSummaryDashboard : AddOnBase
+	{
+        private Window window;
+        private ScrollViewer scroll;
+        private Grid grid;
+        private DispatcherTimer timer;
+
+		private NTMenuItem ccNewMenu;
+		private NTMenuItem myMenuItem;
+
+		private AccountSummaryDashboardWindow dash;
+
+		protected override void OnStateChange()
+        {
+            /*if (State == State.SetDefaults)
+			{
+                Name = "000  Account Summary Dashboard";
+				Description	= @"Enter the description for your new custom Add on here.";
+            } 
+			else if (State == State.Active)
+            {
+                CreateWindow();
+                StartTimer();
+            }
+            else if (State == State.Terminated)
+            {
+                if (timer != null)
+                    timer.Stop();
+                if (window != null)
+                    window.Close();
+            }*/
+        }
+
+		protected override void OnWindowCreated( Window window )
+		{
+			var cc = window as ControlCenter;
+			if(cc == null) return;
+
+			// "New" menu in Control Center
+			ccNewMenu = cc.FindFirst( "ControlCenterMenuItemNew" ) as NTMenuItem;
+			if(ccNewMenu == null) return;
+
+			if(myMenuItem != null) return; // avoid duplicates
+
+			myMenuItem = new NTMenuItem { Header = "PX Account Summary" };
+			myMenuItem.FontSize = 12;
+			myMenuItem.Click += ( s, e ) =>
+			{
+				dash = new AccountSummaryDashboardWindow();
+				dash.Title = "PX Account Summary Dashboard";
+				dash.Owner = cc;
+				dash.Show();
+			};
+			ccNewMenu.Items.Add( myMenuItem );
+		}
+
+		protected override void OnWindowDestroyed( Window window )
+		{
+			var cc = window as ControlCenter;
+			if(cc == null) return;
+
+			//if(cc != null && dash != null)
+			//{
+			//	dash.Close();
+			//	dash = null;
+			//}
+
+			var menu = cc.FindFirst( "ControlCenterMenuItemNew" ) as NTMenuItem;
+			if(menu != null && myMenuItem != null)
+				menu.Items.Remove( myMenuItem );
+
+			myMenuItem = null;
+
+			//Workspace.WorkspaceChanged -= OnWorkspaceChanged;
+		}
+
+		/*private void OnWorkspaceChanged( object sender, WorkspaceChangedEventArgs e )
+		{
+			// Close any dashboard window when workspace switches
+			if(dash != null)
+			{
+				dash.Close();
+				dash = null;
+			}
+		}*/
+
+		/**private void CreateWindow()
+        {
+            grid = new Grid
+            {
+                Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
+                Margin = new Thickness(5)
+            };
+
+            scroll = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = grid
+            };
+
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+
+            AddHeader();
+
+            window = new NTWindow
+            {
+                Title = "Account Summary",
+                Width = 900,
+                Height = 700,
+                Content = scroll,
+                Topmost = false
+            };
+            window.Show();
+        }
+
+        private void AddHeader()
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            string[] headers = { "Account", "Pos", "Unrealized", "Net Liq", "Total PNL" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                var tb = new TextBlock
+                {
+                    Text = headers[i],
+                    Foreground = Brushes.White,
+                    FontWeight = FontWeights.Bold,
+                    Margin = new Thickness(6, 3, 6, 3)
+                };
+                Grid.SetRow(tb, 0);
+                Grid.SetColumn(tb, i);
+                grid.Children.Add(tb);
+            }
+        }
+
+        private void StartTimer()
+        {
+            timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            timer.Tick += (s, e) => RefreshData();
+            timer.Start();
+        }
+
+        private void RefreshData()
+        {
+            // remove all rows except header
+            while (grid.RowDefinitions.Count > 1)
+                grid.RowDefinitions.RemoveAt(1);
+            var children = grid.Children.OfType<UIElement>().Where(c => Grid.GetRow(c) > 0).ToList();
+            foreach (var c in children)
+                grid.Children.Remove(c);
+
+            int row = 1;
+            double grandTotalNet = 0;
+            double grandTotalPnl = 0;
+
+			var grouped = Account.All
+				.Where( a => a.ConnectionStatus == ConnectionStatus.Connected )
+				.Where( a => a.GetAccountItem( AccountItem.TrailingMaxDrawdown, Currency.UsDollar ).Value >= 0 )
+				.ToDictionary( a => a.Name, a => a, StringComparer.OrdinalIgnoreCase );
+			//var grouped = Account.All
+				//.Where( a => a.Connection != null )
+                ////.GroupBy(a => a.Connection.Name)
+                //.OrderBy(g => g.Key);
+
+            foreach (var group in grouped)
+            {
+                // Group Header
+                AddRow(group.Key, "", "", "", "", Brushes.White, row, true);
+                row++;
+
+                double subNet = 0;
+                double subPnl = 0;
+
+				var acct = group.Value;
+                //foreach (var acct in group)
+                {
+                    double unreal = acct.Get(AccountItem.UnrealizedProfitLoss, Currency.UsDollar);
+                    double realized = acct.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                    double pnl = unreal + realized;
+                    double net = acct.Get(AccountItem.CashValue, Currency.UsDollar);
+                    subNet += net;
+                    subPnl += pnl;
+
+                    AddRow(
+                        acct.Name,
+                        "0",
+                        "$" + unreal.ToString("N2"),
+                        "$" + net.ToString("N2"),
+                        "$" + pnl.ToString("N2"),
+                        pnl > 0 ? Brushes.LimeGreen : pnl < 0 ? Brushes.Red : Brushes.White,
+                        row++
+                    );
+                }
+
+                // Subtotal line
+                AddRow($"{group.Key} Total", "", "", "$" + subNet.ToString("N2"), "$" + subPnl.ToString("N2"), Brushes.LimeGreen, row, true);
+                row++;
+                grandTotalNet += subNet;
+                grandTotalPnl += subPnl;
+            }
+
+            // Grand total
+            AddRow("TOTAL", "", "", "$" + grandTotalNet.ToString("N2"), "$" + grandTotalPnl.ToString("N2"), Brushes.LimeGreen, row, true);
+        }
+
+        private void AddRow(string c1, string c2, string c3, string c4, string c5, Brush color, int row, bool isHeader = false)
+        {
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            string[] vals = { c1, c2, c3, c4, c5 };
+
+            for (int i = 0; i < vals.Length; i++)
+            {
+                var tb = new TextBlock
+                {
+                    Text = vals[i],
+                    Foreground = color,
+                    FontWeight = isHeader ? FontWeights.Bold : FontWeights.Normal,
+                    Margin = new Thickness(6, 2, 6, 2)
+                };
+                Grid.SetRow(tb, row);
+                Grid.SetColumn(tb, i);
+                grid.Children.Add(tb);
+            }
+        }**/
+	}
+}

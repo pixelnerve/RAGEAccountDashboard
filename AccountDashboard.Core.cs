@@ -145,6 +145,111 @@ namespace NinjaTrader.AddOns
 			}
 		}
 
+		// assume you have groupToggle declared at UI scope
+		void ApplyGroupingSafe()
+		{
+			//Print( "ApplyGroupingSafe" );
+			// ensure UI thread and apply after current layout pass
+			//Application.Current?.Dispatcher?.InvokeAsync( () =>
+			//{
+				if(MainGrid == null || MainGrid.ItemsSource == null)
+				{
+					Print( "MainGrid is null" );
+					return;
+				}
+
+			if(groupByConnectionEnabled)
+			{
+				View.GroupDescriptions.Clear();
+				View.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+
+				var VisualTree = new FrameworkElementFactory( typeof( TextBlock ), "header" );
+				VisualTree.SetBinding( TextBlock.TextProperty, new Binding( "Name" ) );
+				VisualTree.SetValue( TextBlock.FontWeightProperty, FontWeights.Bold );
+				VisualTree.SetValue( TextBlock.FontSizeProperty, 12.0 );
+				VisualTree.SetValue( TextBlock.ForegroundProperty, Brushes.White );
+				VisualTree.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
+				VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
+				//VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 4, 8, 0, 2 ) );
+
+				MainGrid.GroupStyle.Clear();
+
+				var gs = BuildConnectionHeaderGroupStyle();
+				MainGrid.GroupStyle.Add( gs );
+				/*MainGrid.GroupStyle.Add( new GroupStyle
+				{
+					HeaderTemplate = new DataTemplate
+					{
+						VisualTree = VisualTree
+					},
+					// optional: add padding or hide group borders
+					ContainerStyle = new Style( typeof( GroupItem ) )
+					{
+						Setters = { new Setter( Control.MarginProperty, new Thickness( 0 ) ), new Setter( Control.PaddingProperty, new Thickness( 0 ) ) }
+					}
+				} );*/
+				View.Refresh();
+			}
+			else
+			{
+				View.GroupDescriptions.Clear();
+				MainGrid.GroupStyle.Clear();
+				View.Refresh();
+			}
+
+			/*Print( "ApplyGroupingSafe 2" );
+			if(MainGrid == null || MainGrid.ItemsSource == null) return;
+
+			Print( "ApplyGroupingSafe 3" );
+			var view = View; // CollectionViewSource.GetDefaultView( MainGrid.ItemsSource );
+			if(view == null) return;
+
+			Print( "ApplyGroupingSafe 4" );
+			if(view.GroupDescriptions != null ) 
+				view.GroupDescriptions.Clear();
+			//if(MainGrid.GroupStyle != null)
+				//MainGrid.GroupStyle.Clear();
+
+			Print( "ApplyGroupingSafe 5" );
+			if(groupByConnectionEnabled)
+			{
+				Print( "ApplyGroupingSafe 6" );
+				view.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+				MainGrid.GroupStyle.Add( BuildConnectionHeaderGroupStyle() );
+			}
+
+			Print( "ApplyGroupingSafe 7" );
+			view.Refresh();*/
+			//}, System.Windows.Threading.DispatcherPriority.ContextIdle );
+		}
+
+		GroupStyle BuildConnectionHeaderGroupStyle()
+		{
+			var gs = new GroupStyle();
+
+			// build a simple header template
+			var f = new FrameworkElementFactory( typeof( TextBlock ) );
+			f.SetBinding( TextBlock.TextProperty, new Binding( "Name" ) );
+			f.SetValue( TextBlock.FontWeightProperty, FontWeights.SemiBold );
+			f.SetValue( TextBlock.FontSizeProperty, 12.0 );
+			f.SetValue( TextBlock.ForegroundProperty, ADTheme.Fore );
+			f.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
+			f.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
+			//f.SetValue( TextBlock.MarginProperty, new Thickness( 6, 10, 0, 2 ) );
+			gs.HeaderTemplate = new DataTemplate { VisualTree = f };
+
+			// Remove indent
+			var style = new Style( typeof( GroupItem ) );
+			style.Setters.Add( new Setter( Control.MarginProperty, new Thickness( 0 ) ) );
+			style.Setters.Add( new Setter( Control.PaddingProperty, new Thickness( 0 ) ) );
+
+			// Critical: flatten panel, so no nested indent
+			gs.Panel = new ItemsPanelTemplate(
+				new FrameworkElementFactory( typeof( StackPanel ) )
+			);
+			gs.ContainerStyle = style;
+			return gs;
+		}
 
 		internal void InitializeAccounts()
 		{
@@ -230,11 +335,11 @@ namespace NinjaTrader.AddOns
 			//View.Filter = o => o is AccountRow r && !r.Hidden;
 
 			// Run once and then use the timer
-			RecalcSummaries();
+			//RecalcSummaries();
 			if(refreshTimer == null)
 			{
 				refreshTimer = new DispatcherTimer( DispatcherPriority.Background )
-				{ Interval = TimeSpan.FromMilliseconds( 666 ) };
+				{ Interval = TimeSpan.FromMilliseconds( 333 ) };
 				refreshTimer.Tick += ( s, e ) => RecalcSummaries();
 				refreshTimer.Start();
 			}
@@ -248,6 +353,8 @@ namespace NinjaTrader.AddOns
 				connectionTimer.Tick += ( s, e ) => CheckConnections();
 				connectionTimer.Start();
 			}
+
+			Application.Current.Dispatcher.InvokeAsync( RecalcSummaries, DispatcherPriority.Render );
 		}
 
 		internal void UninitializeAccounts()
@@ -308,6 +415,11 @@ namespace NinjaTrader.AddOns
 							PulseRow( r, ADTheme.ConnectRow );
 						}
 					}, DispatcherPriority.Normal );
+
+					View.Refresh();
+
+					//ApplyGroupingSafe();
+					//View.Refresh();
 				}
 
 				if(removed.Count > 0)
@@ -382,7 +494,8 @@ namespace NinjaTrader.AddOns
 			}
 			catch(Exception ex)
 			{
-				ADLog.Write( $"PulseRow error: {ex.Message}" );
+				Print( $"PulseRow error: {ex.Message}" );
+				//ADLog.Write( $"PulseRow error: {ex.Message}" );
 			}
 		}
 
@@ -397,25 +510,24 @@ namespace NinjaTrader.AddOns
 				r.Safe( () => {
 					FlattenAccount( r.Acct );
 				});
-				//r.Safe(() => Account.FlattenEverything());
-				ADLog.Write($"Risk flatten (DailyGoal) {r.AccountName}");
+				Print( $"Risk flatten (DailyGoal) {r.AccountName}" );
+				//ADLog.Write($"Risk flatten (DailyGoal) {r.AccountName}");
             }
             if (r.TotalPnL <= r.DailyLoss)
             {
 				r.Safe( () => {
 					FlattenAccount( r.Acct );
 				} );
-				//r.Safe(() => r.Acct.FlattenEverything());
-				ADLog.Write($"Risk flatten (DailyLoss) {r.AccountName}");
-            }
-            if (r.AutoLiquidate > 0 && r.NetLiq <= r.AutoLiquidate)
+				Print( $"Risk flatten (DailyLoss) {r.AccountName}" );
+				//ADLog.Write($"Risk flatten (DailyLoss) {r.AccountName}");
+			}
+            /*if (r.AutoLiquidate > 0 && r.NetLiq <= r.AutoLiquidate)
             {
 				r.Safe( () => {
 					FlattenAccount( r.Acct );
 				} );
-				//r.Safe(() => r.Acct.FlattenEverything());
 				ADLog.Write($"Risk flatten (AutoLiq) {r.AccountName}");
-            }
+            }*/
         }
 
 		void FlattenAccount( Account acct )
@@ -497,17 +609,25 @@ namespace NinjaTrader.AddOns
 							//.Where( r => !r.AccountName.StartsWith("Sim",StringComparison.InvariantCultureIgnoreCase) )
 							.Where( r => !showSim ? !r.AccountName.StartsWith( "Sim", StringComparison.InvariantCultureIgnoreCase ) : true )
 							.ToList();
-                var groups = visible.GroupBy(r => r.ConnectionName);
+                var groups = visible.GroupBy(r => r.ConnectionName).OrderBy( g => g.Key, StringComparer.OrdinalIgnoreCase );
 
-                Summaries.Clear();
+				Summaries.Clear();
 
                 foreach (var g in groups)
                 {
-                    Summaries.Add(new SummaryRow
+					var longs = g.Count( x => x.Dir == MarketPosition.Long );
+					var shorts = g.Count( x => x.Dir == MarketPosition.Short );
+					var LDir = longs > shorts ? MarketPosition.Long :
+						  shorts > longs ? MarketPosition.Short :
+						  MarketPosition.Flat;
+					LDir = longs > 0 && shorts > 0 ? (MarketPosition)(-999) : LDir;
+
+					Summaries.Add(new SummaryRow
                     {
                         Label = g.Key,
                         AccountCount = g.Count(),
-						Dir = g.FirstOrDefault().Dir,
+						Dir = LDir,
+						//Dir = g.Any( x => x.Dir == MarketPosition.Long ) ? MarketPosition.Long : g.Any( x => x.Dir == MarketPosition.Short ) ? MarketPosition.Short : MarketPosition.Flat,
 						//TotalSize = g.Sum( x => x.Size ),
 						TotalPos = g.Sum( x => x.Pos ),
 						TotalUnrealized = g.Sum(x => x.Unrealized),
@@ -518,11 +638,13 @@ namespace NinjaTrader.AddOns
                     });
                 }
 
+
+				//Print( "Total" + visible.FirstOrDefault().Dir );
 				Summaries.Add(new SummaryRow
                 {
                     Label = "TOTAL",
                     AccountCount = visible.Count,
-					Dir = MarketPosition.Flat, // visible.FirstOrDefault().Dir,
+					Dir = MarketPosition.Flat,
 					//TotalSize = visible.Sum( x => x.Size ),
 					TotalPos = visible.Sum( x => x.Pos ),
 					TotalUnrealized = visible.Sum(x => x.Unrealized),
@@ -606,6 +728,8 @@ namespace NinjaTrader.AddOns
 						//row.LastAutoLiquidate = autoLiq;
 					}
 
+					//RecalcSummaries();
+
 					EnforceRisk( row);
                 }
                 catch (Exception ex) 
@@ -619,46 +743,62 @@ namespace NinjaTrader.AddOns
 
 		private void OnPositionUpdate( object sender, PositionEventArgs e )
 		{
-			Account acct = sender as Account; if(acct == null) return;
-			var row = Rows.FirstOrDefault( r => r.Acct == acct ); if(row == null) return;
+			Account acct = sender as Account; 
+			if(acct == null) return;
+			
+			var row = Rows.FirstOrDefault( r => r.Acct == acct ); 
+			if(row == null) return;
 
 			//CopierMgr?.HandleExecutionUpdate( acct, e );
 			//try { Copier_OnExecutionUpdate( acct, e ); }
 			//catch(Exception ex) { ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" ); }
 
-			Application.Current?.Dispatcher?.Invoke( () =>
+			try
 			{
-				try
+				var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Position.Instrument );
+				if(pos != null)
 				{
-					var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Position.Instrument );
-					if(pos != null)
-					{
-						row.Dir = pos.MarketPosition;
-						row.Pos = row.Dir == MarketPosition.Long ? pos.Quantity : -pos.Quantity;
-						//row.Pos = Math.Abs( pos.Quantity );
-						row.Qty = Math.Abs( pos.Quantity );
-					}
-					else
-					{
-						row.Dir = MarketPosition.Flat;
-						row.Pos = 0;
-						row.Qty = 0;
-					}
-
-					double unrl = 0;
-					try { if(pos != null) unrl = pos.GetUnrealizedProfitLoss( PerformanceUnit.Currency ); } catch { }
-					if(Math.Abs( unrl - row.LastUnrl ) > EPS) { row.Unrealized = unrl; row.LastUnrl = unrl; }
-
-					var newNet = row.CashValue + row.Unrealized;
-					if(Math.Abs( newNet - row.LastNet ) > EPS) { row.NetLiq = newNet; row.LastNet = newNet; }
-
-					EnforceRisk( row );
-
-					// Force UI update
-					View.Refresh();
+					row.Dir = pos.MarketPosition;
+					//row.Pos = row.Dir == MarketPosition.Long ? pos.Quantity : -pos.Quantity;
+					row.Pos = Math.Abs( pos.Quantity );
+					row.Qty = Math.Abs( pos.Quantity );
 				}
-				catch(Exception ex) { ADLog.Write( $"OnPositionUpdate UI error: {ex.Message}" ); }
-			}, DispatcherPriority.Normal );
+				else
+				{
+					row.Dir = MarketPosition.Flat;
+					row.Pos = 0;
+					row.Qty = 0;
+				}
+
+				double unrl = 0;
+				try { if(pos != null) unrl = pos.GetUnrealizedProfitLoss( PerformanceUnit.Currency ); } catch { }
+				if(Math.Abs( unrl - row.LastUnrl ) > EPS) 
+				{ 
+					row.Unrealized = unrl; row.LastUnrl = unrl; 
+				}
+
+				var newNet = row.CashValue + row.Unrealized;
+				if(Math.Abs( newNet - row.LastNet ) > EPS) 
+				{ 
+					row.NetLiq = newNet; row.LastNet = newNet; 
+				}
+
+				//EnforceRisk( row );
+
+				//RecalcSummaries();
+
+				// Force UI update
+				//Application.Current?.Dispatcher?.InvokeAsync( () =>
+				//{
+				//	View.Refresh();
+				//}, DispatcherPriority.Normal );
+				View.Refresh();
+			}
+			catch(Exception ex) 
+			{
+				Print( $"OnPositionUpdate UI error: {ex.Message}" );
+				//ADLog.Write( $"OnPositionUpdate UI error: {ex.Message}" ); 
+			}
 		}
 
 

@@ -48,8 +48,9 @@ namespace NinjaTrader.AddOns
 
         public static readonly Brush PosLong = new SolidColorBrush(Color.FromArgb(0x60, 0x33, 0xFF, 0x33));
         public static readonly Brush PosShort = new SolidColorBrush(Color.FromArgb(0x60, 0xFF, 0x33, 0x33));
+		public static readonly Brush PosMixed = new SolidColorBrush( Color.FromArgb( 0x60, 0xFF, 0xFF, 0x33 ) ); // yellow tint
 
-        public static readonly Brush RowMaster = new SolidColorBrush(Color.FromArgb(255, 64, 0, 0));
+		public static readonly Brush RowMaster = new SolidColorBrush(Color.FromArgb(255, 64, 0, 0));
         public static readonly Brush RowFollower = new SolidColorBrush(Color.FromArgb(255, 64, 64, 32));
 
 		public static readonly Brush White = new SolidColorBrush( Color.FromRgb( 255, 255, 255 ) );
@@ -86,6 +87,24 @@ namespace NinjaTrader.AddOns
         public object ConvertBack(object v, Type t, object p, CultureInfo c) => null;
     }
 
+	public sealed class AccountTypeColorConverter : IValueConverter
+	{
+		public object Convert( object value, Type targetType, object parameter, CultureInfo culture )
+		{
+			if(value is string name)
+			{
+				name = name.ToUpperInvariant();
+				if(name.Contains( "SF" ) || name.Contains( "LTD" ) || name.Contains( "TAKEPROFITPRO" ))
+					return new SolidColorBrush( Color.FromRgb( 0x2E, 0xC4, 0x44 ) ); // green
+				else if(name.StartsWith( "Sim", StringComparison.InvariantCultureIgnoreCase ) )
+					return new SolidColorBrush( Color.FromRgb( 0xAF, 0xAF, 0x44 ) ); // yellow
+				return new SolidColorBrush( Color.FromRgb( 0x77, 0x77, 0x77 ) ); // light gray
+			}
+			return Brushes.Transparent;
+		}
+
+		public object ConvertBack( object value, Type targetType, object parameter, CultureInfo culture ) => null;
+	}
 
 	public sealed class PosBackgroundConverter : IValueConverter
 	{
@@ -94,7 +113,12 @@ namespace NinjaTrader.AddOns
 			if(v is MarketPosition mp)
 				return mp == MarketPosition.Long ? ADTheme.PosLong :
 					   mp == MarketPosition.Short ? ADTheme.PosShort :
-					   Brushes.Transparent;
+					   mp == MarketPosition.Flat ? Brushes.Transparent :
+					   ADTheme.PosMixed;
+
+				//return mp == MarketPosition.Long ? ADTheme.PosLong :
+						   //mp == MarketPosition.Short ? ADTheme.PosShort :
+						   //Brushes.Transparent;
 			return Brushes.Transparent;
 		}
 		public object ConvertBack( object v, Type t, object p, CultureInfo c ) => null;
@@ -273,7 +297,7 @@ namespace NinjaTrader.AddOns
         public string Label { get => _label; set { _label = value; OnChanged(); } }
         public int AccountCount { get => _count; set { _count = value; OnChanged(); } }
 		//public double TotalSize { get => _size; set { _size = value; OnChanged(); } }
-		public double TotalPos { get => _pos; set { _pos = value; OnChanged(); } }
+		//public double TotalPos { get => _pos; set { _pos = value; OnChanged(); } }
 		public double TotalUnrealized { get => _u; set { _u = value; OnChanged(); } }
         public double TotalRealized { get => _r; set { _r = value; OnChanged(); } }
         public double TotalCash { get => _c; set { _c = value; OnChanged(); } }
@@ -288,8 +312,30 @@ namespace NinjaTrader.AddOns
 			{
 				_dir = value;
 				OnChanged( nameof( Dir ) ); // always notify, even if same value
+				if(_dir == MarketPosition.Flat)
+					OnChanged( nameof( TotalPos ) ); // ensure converter reevaluates
 			}
 		}
+		public double TotalPos
+		{
+			get => _pos;
+			set
+			{
+				_pos = value; OnChanged( nameof( TotalPos ) );
+				if(_pos == 0)
+					OnChanged( nameof( Dir ) ); // ensure converter reevaluates
+			}
+		}
+
+		/*public MarketPosition Dir
+		{
+			get => _dir;
+			set
+			{
+				_dir = value;
+				OnChanged( nameof( Dir ) ); // always notify, even if same value
+			}
+		}*/
 
 		string _label; int _count;
 		double _pos, _u, _r, _c, _n, _m; //, _size;
