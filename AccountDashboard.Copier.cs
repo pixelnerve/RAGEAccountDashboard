@@ -87,6 +87,44 @@ namespace NinjaTrader.AddOns
 				}
 			}
 
+			internal void RefreshAccountsAfterReconnect()
+			{
+				if(Master == null && Followers.Count == 0) return;
+
+				try
+				{
+					// Re-link master
+					var newMaster = Account.All.FirstOrDefault( a =>
+						a.Name.Equals( Master?.Name, StringComparison.OrdinalIgnoreCase ) );
+					if(newMaster != null && newMaster != Master)
+					{
+						UnsubscribeMaster();
+						Master = newMaster;
+						Master.OrderUpdate += OnOrderUpdate;
+						ADLog.Write( $"Copier reattached to master: {Master.Name}" );
+					}
+
+					// Re-link followers
+					var newFollowers = new List<Account>();
+					foreach(var f in Followers)
+					{
+						var newAcct = Account.All.FirstOrDefault( a =>
+							a.Name.Equals( f.Name, StringComparison.OrdinalIgnoreCase ) );
+						if(newAcct != null)
+							newFollowers.Add( newAcct );
+					}
+
+					Followers.Clear();
+					Followers.AddRange( newFollowers );
+
+					ADLog.Write( $"Copier refreshed after reconnect. Master: {Master?.Name}, Followers: {Followers.Count}" );
+				}
+				catch(Exception ex)
+				{
+					ADLog.Write( $"Copier.RefreshAccountsAfterReconnect error: {ex.Message}" );
+				}
+			}
+
 			internal void ClearAll()
 			{
 				try
@@ -541,7 +579,7 @@ namespace NinjaTrader.AddOns
 				}
 			}*/
 
-			private void OnExecutionUpdate( object sender, ExecutionEventArgs e )
+			/*private void OnExecutionUpdate( object sender, ExecutionEventArgs e )
 			{
 				if(!IsActive) return;
 				try
@@ -553,7 +591,7 @@ namespace NinjaTrader.AddOns
 				{
 					ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" );
 				}
-			}
+			}*/
 
 			// ---------- Replication stubs ----------
 

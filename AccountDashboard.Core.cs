@@ -42,24 +42,45 @@ namespace NinjaTrader.AddOns
 		string SettingsPath;
         string LogPath;
 
-        // Config object for JSON
-        class PersistModel
-        {
-            public class RowCfg
-            {
-                public string Account;
-                public int Role;           // RowRole
-                public bool Hidden;
-                public bool RiskEnabled;
-                public int Size;
-                public double DailyGoal;
-                public double DailyLoss;
-                public double AutoLiq;
-                public double StartBalance;
-                public double DayRealizedStart;
-            }
-            public RowCfg[] Rows;
-        }
+		// Config object for JSON
+		class PersistModel
+		{
+			public class RowCfg
+			{
+				public string Account;
+				public int Role;
+				public bool Hidden;
+				public bool RiskEnabled;
+				public int Size;
+				public double DailyGoal;
+				public double DailyLoss;
+				public double AutoLiq;
+				public double StartBalance;
+				public double DayRealizedStart;
+			}
+
+			public class ColumnCfg
+			{
+				public string Header;
+				public double Width;
+				public int DisplayIndex;
+				public bool Visible;
+				public bool IsSorted;
+				public ListSortDirection? SortDirection;
+			}
+
+			public RowCfg[] Rows;
+			public List<ColumnCfg> Columns;
+
+			public double WindowLeft;
+			public double WindowTop;
+			public double WindowWidth;
+			public double WindowHeight;
+
+			public bool ShowSim;
+			public bool CopierEnabled;
+			public bool GroupByConnectionEnabled;
+		}
 
 		protected override void OnStateChange()
 		{
@@ -72,11 +93,11 @@ namespace NinjaTrader.AddOns
 			{
 				SettingsPath = Path.Combine(
 					Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ),
-					"NinjaTrader 8", "templates", "AccountDashboard", "settings.json" );
+					"NinjaTrader 8", "templates", "AccountDashboard", "RAGEAccountDashboardSettings.json" );
 
 				LogPath = Path.Combine(
 					Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ),
-					"NinjaTrader 8", "log", "AccountDashboard.log" );
+					"NinjaTrader 8", "log", "RAGEAccountDashboard.log" );
 
 				Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath ) );
 				Directory.CreateDirectory( Path.GetDirectoryName( LogPath ) );
@@ -145,87 +166,139 @@ namespace NinjaTrader.AddOns
 			}
 		}
 
+
+		void SafeApplyGrouping()
+		{
+			try
+			{
+				if(MainGrid == null)
+				{
+					Print( "MainGrid is null" );
+					return;
+				}
+				if(MainGrid.ItemsSource == null)
+				{
+					Print( "MainGrid ItemsSource is null" );
+					return;
+				}
+
+				var uiDispatcher = MainGrid.Dispatcher;
+				if(!uiDispatcher.CheckAccess())
+				{
+					uiDispatcher.InvokeAsync( SafeApplyGrouping, DispatcherPriority.ContextIdle );
+					return;
+				}
+
+				// --- run on UI thread ---
+				View.GroupDescriptions.Clear();
+				MainGrid.GroupStyle.Clear();
+
+				if(groupByConnectionEnabled)
+				{
+					View.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+					MainGrid.GroupStyle.Add( BuildConnectionHeaderGroupStyle() );
+				}
+
+				View.Refresh();
+			}
+			catch(Exception ex)
+			{
+				Print( "SafeApplyGrouping error: " + ex.Message );
+			}
+		}
+
 		// assume you have groupToggle declared at UI scope
 		void ApplyGroupingSafe()
 		{
-			//Print( "ApplyGroupingSafe" );
-			// ensure UI thread and apply after current layout pass
-			//Application.Current?.Dispatcher?.InvokeAsync( () =>
-			//{
+			try
+			{
+				//Print( "ApplyGroupingSafe" );
+				// ensure UI thread and apply after current layout pass
+				//Application.Current?.Dispatcher?.InvokeAsync( () =>
+				//{
 				if(MainGrid == null || MainGrid.ItemsSource == null)
 				{
 					Print( "MainGrid is null" );
 					return;
 				}
 
-			if(groupByConnectionEnabled)
-			{
-				View.GroupDescriptions.Clear();
-				View.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
-
-				var VisualTree = new FrameworkElementFactory( typeof( TextBlock ), "header" );
-				VisualTree.SetBinding( TextBlock.TextProperty, new Binding( "Name" ) );
-				VisualTree.SetValue( TextBlock.FontWeightProperty, FontWeights.Bold );
-				VisualTree.SetValue( TextBlock.FontSizeProperty, 12.0 );
-				VisualTree.SetValue( TextBlock.ForegroundProperty, Brushes.White );
-				VisualTree.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
-				VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
-				//VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 4, 8, 0, 2 ) );
-
-				MainGrid.GroupStyle.Clear();
-
-				var gs = BuildConnectionHeaderGroupStyle();
-				MainGrid.GroupStyle.Add( gs );
-				/*MainGrid.GroupStyle.Add( new GroupStyle
+				if(groupByConnectionEnabled)
 				{
-					HeaderTemplate = new DataTemplate
+					View.GroupDescriptions.Clear();
+					View.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+
+					//var VisualTree = new FrameworkElementFactory( typeof( TextBlock ), "header" );
+					//VisualTree.SetBinding( TextBlock.TextProperty, new Binding( "Name" ) );
+					//VisualTree.SetValue( TextBlock.FontWeightProperty, FontWeights.Bold );
+					//VisualTree.SetValue( TextBlock.FontSizeProperty, 12.0 );
+					//VisualTree.SetValue( TextBlock.ForegroundProperty, Brushes.White );
+					//VisualTree.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
+					//VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 0, 4, 0, 0 ) );
+					////VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
+					////VisualTree.SetValue( TextBlock.MarginProperty, new Thickness( 4, 8, 0, 2 ) );
+
+					MainGrid.GroupStyle.Clear();
+
+					var gs = BuildConnectionHeaderGroupStyle();
+					MainGrid.GroupStyle.Add( gs );
+					/*MainGrid.GroupStyle.Add( new GroupStyle
 					{
-						VisualTree = VisualTree
-					},
-					// optional: add padding or hide group borders
-					ContainerStyle = new Style( typeof( GroupItem ) )
-					{
-						Setters = { new Setter( Control.MarginProperty, new Thickness( 0 ) ), new Setter( Control.PaddingProperty, new Thickness( 0 ) ) }
-					}
-				} );*/
-				View.Refresh();
+						HeaderTemplate = new DataTemplate
+						{
+							VisualTree = VisualTree
+						},
+						// optional: add padding or hide group borders
+						ContainerStyle = new Style( typeof( GroupItem ) )
+						{
+							Setters = { new Setter( Control.MarginProperty, new Thickness( 0 ) ), new Setter( Control.PaddingProperty, new Thickness( 0 ) ) }
+						}
+					} );*/
+					View.Refresh();
+				}
+				else
+				{
+					View.GroupDescriptions.Clear();
+					MainGrid.GroupStyle.Clear();
+					View.Refresh();
+				}
+
+				/*Print( "ApplyGroupingSafe 2" );
+				if(MainGrid == null || MainGrid.ItemsSource == null) return;
+
+				Print( "ApplyGroupingSafe 3" );
+				var view = View; // CollectionViewSource.GetDefaultView( MainGrid.ItemsSource );
+				if(view == null) return;
+
+				Print( "ApplyGroupingSafe 4" );
+				if(view.GroupDescriptions != null ) 
+					view.GroupDescriptions.Clear();
+				//if(MainGrid.GroupStyle != null)
+					//MainGrid.GroupStyle.Clear();
+
+				Print( "ApplyGroupingSafe 5" );
+				if(groupByConnectionEnabled)
+				{
+					Print( "ApplyGroupingSafe 6" );
+					view.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
+					MainGrid.GroupStyle.Add( BuildConnectionHeaderGroupStyle() );
+				}
+
+				Print( "ApplyGroupingSafe 7" );
+				view.Refresh();*/
+				//}, System.Windows.Threading.DispatcherPriority.ContextIdle );
 			}
-			else
+			catch(Exception ex)
 			{
-				View.GroupDescriptions.Clear();
-				MainGrid.GroupStyle.Clear();
-				View.Refresh();
+				Print( "ApplyGroupingSafe: "  + ex.Message );
 			}
-
-			/*Print( "ApplyGroupingSafe 2" );
-			if(MainGrid == null || MainGrid.ItemsSource == null) return;
-
-			Print( "ApplyGroupingSafe 3" );
-			var view = View; // CollectionViewSource.GetDefaultView( MainGrid.ItemsSource );
-			if(view == null) return;
-
-			Print( "ApplyGroupingSafe 4" );
-			if(view.GroupDescriptions != null ) 
-				view.GroupDescriptions.Clear();
-			//if(MainGrid.GroupStyle != null)
-				//MainGrid.GroupStyle.Clear();
-
-			Print( "ApplyGroupingSafe 5" );
-			if(groupByConnectionEnabled)
-			{
-				Print( "ApplyGroupingSafe 6" );
-				view.GroupDescriptions.Add( new PropertyGroupDescription( nameof( AccountRow.ConnectionName ) ) );
-				MainGrid.GroupStyle.Add( BuildConnectionHeaderGroupStyle() );
-			}
-
-			Print( "ApplyGroupingSafe 7" );
-			view.Refresh();*/
-			//}, System.Windows.Threading.DispatcherPriority.ContextIdle );
 		}
 
 		GroupStyle BuildConnectionHeaderGroupStyle()
 		{
 			var gs = new GroupStyle();
+
+			// NOTE: To remove a slight indent applied by the grouping we add 6 margin to title and -6 to the rows (assuming it's half the font size.. not sure but it looks good like that)
+			// If things change this might need some adjustments
 
 			// build a simple header template
 			var f = new FrameworkElementFactory( typeof( TextBlock ) );
@@ -233,14 +306,13 @@ namespace NinjaTrader.AddOns
 			f.SetValue( TextBlock.FontWeightProperty, FontWeights.SemiBold );
 			f.SetValue( TextBlock.FontSizeProperty, 12.0 );
 			f.SetValue( TextBlock.ForegroundProperty, ADTheme.Fore );
-			f.SetValue( TextBlock.MarginProperty, new Thickness( 0 ) );
 			f.SetValue( TextBlock.PaddingProperty, new Thickness( 0 ) );
-			//f.SetValue( TextBlock.MarginProperty, new Thickness( 6, 10, 0, 2 ) );
+			f.SetValue( TextBlock.MarginProperty, new Thickness( 6, 4, 0, 0 ) );
 			gs.HeaderTemplate = new DataTemplate { VisualTree = f };
 
 			// Remove indent
 			var style = new Style( typeof( GroupItem ) );
-			style.Setters.Add( new Setter( Control.MarginProperty, new Thickness( 0 ) ) );
+			style.Setters.Add( new Setter( Control.MarginProperty, new Thickness( -6, 0, 0, 0 ) ) );
 			style.Setters.Add( new Setter( Control.PaddingProperty, new Thickness( 0 ) ) );
 
 			// Critical: flatten panel, so no nested indent
@@ -249,6 +321,139 @@ namespace NinjaTrader.AddOns
 			);
 			gs.ContainerStyle = style;
 			return gs;
+		}
+
+
+		internal void InitializeAccountsDiff()
+		{
+			try
+			{
+				// cache roles before reset
+				var savedRoles = Rows?.ToDictionary( r => r.AccountName, r => new { r.Role, r.Size } ) ?? new();
+
+				var oldRows = Rows.ToDictionary( r => r.AccountName );
+				var liveAccounts = Account.All
+					.Where( a => a.ConnectionStatus == ConnectionStatus.Connecting || a.ConnectionStatus == ConnectionStatus.Connected )
+					.ToDictionary( a => a.Name, a => a );
+
+				// Remove old
+				foreach(var dead in oldRows.Keys.Except( liveAccounts.Keys ).ToList())
+				{
+					var row = oldRows[ dead ];
+					row.Acct.AccountItemUpdate -= OnAccountItemUpdate;
+					row.Acct.PositionUpdate -= OnPositionUpdate;
+					row.Acct.ExecutionUpdate -= OnExecutionUpdate;
+					Rows.Remove( row );
+
+					//Print( "Remove dead row: " + row.AccountName );
+				}
+
+				// Add new
+				foreach(var add in liveAccounts.Keys.Except( oldRows.Keys ))
+				{
+					var acct = liveAccounts[ add ];
+					acct.AccountItemUpdate += OnAccountItemUpdate;
+					acct.PositionUpdate += OnPositionUpdate;
+					acct.ExecutionUpdate += OnExecutionUpdate;
+
+					var newRow = new AccountRow( acct, _ => true, OnRoleButtonClicked );
+					
+					//Print( "Add new row: " + newRow.AccountName );
+
+					newRow.CashValue = SafeGet( acct, AccountItem.CashValue );
+					newRow.Realized = SafeGet( acct, AccountItem.RealizedProfitLoss );
+					newRow.Unrealized = SafeGet( acct, AccountItem.UnrealizedProfitLoss );
+					newRow.Commissions = SafeGet( acct, AccountItem.Commission );
+					newRow.TrailingMaxDrawdown = SafeGet( acct, AccountItem.TrailingMaxDrawdown );
+					newRow.StartBalance = SafeGet( acct, AccountItem.CashValue );
+					newRow.DayRealizedStart = SafeGet( acct, AccountItem.RealizedProfitLoss );
+
+					// --- existing position at startup ---
+					if(acct.Positions != null && acct.Positions.Count > 0)
+					{
+						double totalUPNL = acct.Positions.Sum( p => p.GetUnrealizedProfitLoss( PerformanceUnit.Currency ) );
+						int totalQty = acct.Positions.Sum( p => Math.Abs( p.Quantity ) );
+						var hasLong = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Long );
+						var hasShort = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Short );
+
+						newRow.Pos = totalQty;
+						newRow.Qty = totalQty;
+						newRow.Dir = hasLong && hasShort ? (MarketPosition)(-999) :
+								  hasLong ? MarketPosition.Long :
+								  hasShort ? MarketPosition.Short :
+								  MarketPosition.Flat;
+					}
+					else
+					{
+						newRow.Dir = MarketPosition.Flat;
+						newRow.Pos = 0;
+						newRow.Qty = 0;
+					}
+
+					// restore previous role and size if available
+					if(savedRoles.TryGetValue( acct.Name, out var saved ))
+					{
+						newRow.Role = saved.Role;
+						newRow.Size = saved.Size;
+						if(newRow.Role == RowRole.Master)
+						{
+							CopierMgr.SetMaster( newRow.Acct );
+						}
+						else if(newRow.Role == RowRole.Follower)
+						{
+							CopierMgr.AddFollower( newRow.Acct );
+						}
+					}
+
+					Rows.Add( newRow );
+				}
+
+				// Filters
+				View = System.Windows.Data.CollectionViewSource.GetDefaultView( Rows );
+				View.Filter = o =>
+				{
+					if(o is not AccountRow r) return false;
+					if(r.Hidden) return false;
+					if(!showSim && r.AccountName.StartsWith( "Sim", StringComparison.OrdinalIgnoreCase ))
+						return false;
+					return true;
+				};
+				//View.Filter = o => o is AccountRow r && !r.Hidden;
+
+				// Run once and then use the timer
+				if(refreshTimer != null)
+				{
+					refreshTimer.Stop();
+					refreshTimer = null;
+				}
+				refreshTimer = new DispatcherTimer( DispatcherPriority.Background )
+				{ Interval = TimeSpan.FromMilliseconds( 333 ) };
+				refreshTimer.Tick += ( s, e ) => RecalcSummaries();
+				refreshTimer.Start();
+
+				// --- connection monitor ---
+				if(connectionTimer != null)
+				{
+					connectionTimer.Stop();
+					connectionTimer = null;
+				}
+				connectionTimer = new DispatcherTimer( DispatcherPriority.Background )
+				{
+					//Interval = TimeSpan.FromMilliseconds( 666 )
+					Interval = TimeSpan.FromSeconds( 2 )
+				};
+				connectionTimer.Tick += ( s, e ) => CheckConnections();
+				connectionTimer.Start();
+
+				// Existing ones need no resubscription or recreation
+				SafeApplyGrouping();
+				RecalcSummaries();
+				View.Refresh();
+			}
+			catch(Exception ex)
+			{
+				Print( "InitializeAccountsDiff: " + ex.Message );
+			}
 		}
 
 		internal void InitializeAccounts()
@@ -262,25 +467,24 @@ namespace NinjaTrader.AddOns
 			if(Summaries == null)
 				Summaries = new ObservableCollection<SummaryRow>();*/
 
-			CopierMgr.ClearAll();
-			Rows.Clear();
-			Summaries.Clear();
+			//CopierMgr.ClearAll();
 
-			foreach(var a in Account.All)
+			Rows.Clear();
+
+			foreach(var acct in Account.All)
 			{
-				if(a.ConnectionStatus != ConnectionStatus.Connected)
+				if(acct.ConnectionStatus != ConnectionStatus.Connected)
 					continue;
 
-				a.PositionUpdate += OnPositionUpdate;
-				a.AccountItemUpdate += OnAccountItemUpdate;
-				a.ExecutionUpdate += OnExecutionUpdate;
-				//a.OrderUpdate += OnOrderUpdate;
-					
+				acct.PositionUpdate += OnPositionUpdate;
+				acct.AccountItemUpdate += OnAccountItemUpdate;
+				acct.ExecutionUpdate += OnExecutionUpdate;
+
 				//Print( $"Add new row {a.Name}");
-				var row = new AccountRow( a, canChangeRole: _ => true, onRoleClick: OnRoleButtonClicked );
+				var row = new AccountRow( acct, canChangeRole: _ => true, onRoleClick: OnRoleButtonClicked );
 
 				// restore previous role and size if available
-				if(savedRoles.TryGetValue( a.Name, out var saved ))
+				if(savedRoles.TryGetValue( acct.Name, out var saved ))
 				{
 					row.Role = saved.Role;
 					row.Size = saved.Size;
@@ -297,17 +501,36 @@ namespace NinjaTrader.AddOns
 				Rows.Add( row );
 
 				//Print( $"Assign values to Account {a.Name}" );
-				row.CashValue = SafeGet( a, AccountItem.CashValue );
-				row.Realized = SafeGet( a, AccountItem.RealizedProfitLoss );
-				row.Unrealized = SafeGet( a, AccountItem.UnrealizedProfitLoss );
-				row.Commissions = SafeGet( a, AccountItem.Commission );
-				row.TrailingMaxDrawdown = SafeGet( a, AccountItem.TrailingMaxDrawdown );
-
-				row.StartBalance = SafeGet( a, AccountItem.CashValue );
-				row.DayRealizedStart = SafeGet( a, AccountItem.RealizedProfitLoss );
+				row.CashValue = SafeGet( acct, AccountItem.CashValue );
+				row.Realized = SafeGet( acct, AccountItem.RealizedProfitLoss );
+				row.Unrealized = SafeGet( acct, AccountItem.UnrealizedProfitLoss );
+				row.Commissions = SafeGet( acct, AccountItem.Commission );
+				row.TrailingMaxDrawdown = SafeGet( acct, AccountItem.TrailingMaxDrawdown );
+				row.StartBalance = SafeGet( acct, AccountItem.CashValue );
+				row.DayRealizedStart = SafeGet( acct, AccountItem.RealizedProfitLoss );
 
 				// --- existing position at startup ---
-				var pos = a.Positions?.FirstOrDefault();
+				if(acct.Positions != null && acct.Positions.Count > 0)
+				{
+					double totalUPNL = acct.Positions.Sum( p => p.GetUnrealizedProfitLoss( PerformanceUnit.Currency ) );
+					int totalQty = acct.Positions.Sum( p => Math.Abs( p.Quantity ) );
+					var hasLong = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Long );
+					var hasShort = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Short );
+
+					row.Pos = totalQty;
+					row.Qty = totalQty;
+					row.Dir = hasLong && hasShort ? (MarketPosition)(-999) :
+							  hasLong ? MarketPosition.Long :
+							  hasShort ? MarketPosition.Short :
+							  MarketPosition.Flat;
+				}
+				else
+				{
+					row.Dir = MarketPosition.Flat;
+					row.Pos = 0;
+					row.Qty = 0;
+				}
+				/*var pos = a.Positions?.FirstOrDefault();
 				if(pos != null)
 				{
 					row.Dir = pos.MarketPosition;
@@ -319,7 +542,7 @@ namespace NinjaTrader.AddOns
 					row.Dir = MarketPosition.Flat;
 					row.Pos = 0;
 					row.Qty = 0;
-				}
+				}*/
 			}
 
 			// Filters
@@ -335,7 +558,12 @@ namespace NinjaTrader.AddOns
 			//View.Filter = o => o is AccountRow r && !r.Hidden;
 
 			// Run once and then use the timer
-			//RecalcSummaries();
+			RecalcSummaries();
+			if(refreshTimer != null)
+			{
+				refreshTimer.Stop();
+				refreshTimer = null;
+			}
 			if(refreshTimer == null)
 			{
 				refreshTimer = new DispatcherTimer( DispatcherPriority.Background )
@@ -344,21 +572,31 @@ namespace NinjaTrader.AddOns
 				refreshTimer.Start();
 			}
 			// --- connection monitor ---
+			if(connectionTimer != null)
+			{
+				connectionTimer.Stop();
+				connectionTimer = null;
+			}
 			if(connectionTimer == null)
 			{
 				connectionTimer = new DispatcherTimer( DispatcherPriority.Background )
 				{
-					Interval = TimeSpan.FromSeconds( 1 )
+					Interval = TimeSpan.FromSeconds( 2 )
 				};
 				connectionTimer.Tick += ( s, e ) => CheckConnections();
 				connectionTimer.Start();
 			}
 
-			Application.Current.Dispatcher.InvokeAsync( RecalcSummaries, DispatcherPriority.Render );
+			SafeApplyGrouping();
+			//Application.Current?.Dispatcher.InvokeAsync( () => ApplyGroupingSafe(), DispatcherPriority.ContextIdle );
+			//ApplyGroupingSafe();
 		}
+
 
 		internal void UninitializeAccounts()
 		{
+			CopierMgr.ClearAll();
+
 			if(refreshTimer != null)
 			{
 				refreshTimer.Stop();
@@ -371,24 +609,273 @@ namespace NinjaTrader.AddOns
 				connectionTimer = null;
 			}
 
-			CopierMgr.ClearAll();
 			foreach(var r in Rows)
 			{
 				r.Acct.PositionUpdate -= OnPositionUpdate;
 				r.Acct.AccountItemUpdate -= OnAccountItemUpdate;
 				r.Acct.ExecutionUpdate -= OnExecutionUpdate;
-				//r.Acct.OrderUpdate -= OnOrderUpdate;
-
 			}
 		}
+
+
+		Dictionary<string, DateTime> disconnectTimes = new( StringComparer.OrdinalIgnoreCase );
+		const int DisconnectGraceSeconds = 15;
+
 
 		void CheckConnections()
 		{
 			try
 			{
+				// refresh connection indicators on all rows
+				foreach(var r in Rows)
+				{
+					if(r.Acct == null) continue;
+					r.OnChanged( nameof( r.ConnStatus ) );
+				}
+
+				var now = DateTime.UtcNow;
+
+				// current live connected account names
+				var connected = Account.All
+					.Where( a => a.ConnectionStatus == ConnectionStatus.Connecting || a.ConnectionStatus == ConnectionStatus.Connected )
+					.Select( a => a.Name )
+					.ToHashSet( StringComparer.OrdinalIgnoreCase );
+
+				addedAccounts = connected.Except( prevAccounts ).ToHashSet( StringComparer.OrdinalIgnoreCase );
+				var added = connected.Except( prevAccounts ).ToList();
+				var removed = prevAccounts.Except( connected ).ToList();
+
+				// nothing changed and no pending disconnects
+				if(added.Count == 0 && removed.Count == 0 && disconnectTimes.Count == 0)
+					return;
+
+				//-----------------------------------------------------
+				// Handle removed (disconnected) accounts
+				//-----------------------------------------------------
+				if(removed.Count > 0)
+				{
+					foreach(var row in Rows)
+					{
+						if(!connected.Contains( row.AccountName ))
+						{
+							// mark disconnect time once
+							if(!disconnectTimes.ContainsKey( row.AccountName ))
+							{
+								disconnectTimes[ row.AccountName ] = now;
+								PulseRow( row, ADTheme.DisconnectRow );
+							}
+						}
+						else
+						{
+							// came back online
+							PulseRow( row, ADTheme.ConnectRow );
+							disconnectTimes.Remove( row.AccountName );
+						}
+					}
+				}
+				else
+				{
+					// mark reconnections for already tracked rows
+					foreach(var row in Rows)
+					{
+						if(connected.Contains( row.AccountName ))
+							disconnectTimes.Remove( row.AccountName );
+					}
+				}
+
+				//-----------------------------------------------------
+				// Remove expired disconnected accounts
+				//-----------------------------------------------------
+				var expired = disconnectTimes
+					.Where( kvp => (now - kvp.Value).TotalSeconds > DisconnectGraceSeconds )
+					.Select( kvp => kvp.Key )
+					.ToList();
+
+				if(expired.Count > 0)
+				{
+					ADLog.Write( $"Removing {expired.Count} accounts after timeout" );
+
+					MainGrid?.Dispatcher.Invoke( () =>
+					{
+						foreach(var name in expired)
+						{
+							var row = Rows.FirstOrDefault( r => r.AccountName.Equals( name, StringComparison.OrdinalIgnoreCase ) );
+							if(row != null)
+							{
+								row.Acct.AccountItemUpdate -= OnAccountItemUpdate;
+								row.Acct.PositionUpdate -= OnPositionUpdate;
+								row.Acct.ExecutionUpdate -= OnExecutionUpdate;
+								Rows.Remove( row );
+							}
+							disconnectTimes.Remove( name );
+						}
+						RecalcSummaries();
+						View.Refresh();
+					} );
+				}
+
+				//-----------------------------------------------------
+				// Handle new connections or replacements
+				//-----------------------------------------------------
+				if(added.Count > 0 || expired.Count > 0)
+				{
+					InitializeAccountsDiff();
+					MainGrid?.Dispatcher.InvokeAsync( () =>
+					{
+						foreach(var r in Rows.Where( x => added.Contains( x.AccountName ) ))
+							PulseRow( r, ADTheme.ConnectRow );
+					}, DispatcherPriority.Render );
+				}
+
+				prevAccounts = connected;
+				View.Refresh();
+
+				if(CopierMgr != null )
+					CopierMgr.RefreshAccountsAfterReconnect();
+			}
+			catch(Exception ex)
+			{
+				ADLog.Write( $"CheckConnections error: {ex.Message}" );
+			}
+		}
+
+
+		void CheckConnections222()
+		{
+			try
+			{
+				//Print( "Check connections" );
+
+				foreach(var r in Rows)
+				{
+					if(r.Acct == null) continue;
+					//if(r.Hidden) continue;
+					r.OnChanged( nameof( r.ConnStatus ) );
+				}
+
+				var now = DateTime.UtcNow;
+
+				var connected = Account.All
+					.Where( a => a.ConnectionStatus == ConnectionStatus.Connecting || a.ConnectionStatus == ConnectionStatus.Connected )
+					.Select( a => a.Name )
+					.ToHashSet( StringComparer.OrdinalIgnoreCase );
+
+				addedAccounts = connected.Except( prevAccounts ).ToHashSet( StringComparer.OrdinalIgnoreCase );
+				var added = connected.Except( prevAccounts ).ToList();
+				var removed = prevAccounts.Except( connected ).ToList();
+
+				// nothing changed
+				if(added.Count == 0 && removed.Count == 0)
+					return;
+
+				if(removed.Count > 0)
+				{
+					// Mark disconnect times
+					foreach(var row in Rows)
+					{
+						if(!connected.Contains( row.AccountName ))
+						{
+							if(!disconnectTimes.ContainsKey( row.AccountName ))
+							{
+								disconnectTimes[ row.AccountName ] = now;  // first detected disconnect
+								PulseRow( row, ADTheme.DisconnectRow );
+							}
+						}
+						else
+						{
+							// back online
+							PulseRow( row, ADTheme.ConnectRow );
+							disconnectTimes.Remove( row.AccountName );
+						}
+					}
+
+					// Remove accounts that exceeded grace period
+					var expired = disconnectTimes
+						.Where( kvp => (now - kvp.Value).TotalSeconds > DisconnectGraceSeconds )
+						.Select( kvp => kvp.Key )
+						.ToList();
+
+					if(expired.Count > 0)
+					{
+						ADLog.Write( $"Removing {expired.Count} accounts after timeout" );
+
+						MainGrid?.Dispatcher.Invoke( () =>
+						{
+							foreach(var name in expired)
+							{
+								var row = Rows.FirstOrDefault( r => r.AccountName.Equals( name, StringComparison.OrdinalIgnoreCase ) );
+								if(row != null)
+								{
+									row.Acct.AccountItemUpdate -= OnAccountItemUpdate;
+									row.Acct.PositionUpdate -= OnPositionUpdate;
+									row.Acct.ExecutionUpdate -= OnExecutionUpdate;
+									Rows.Remove( row );
+								}
+								disconnectTimes.Remove( name );
+							}
+							RecalcSummaries();
+							//View.Refresh();
+						} );
+
+						//Rows = new ObservableCollection<AccountRow>( Rows.Where( r => !expired.Contains( r.AccountName ) ) );					
+						//View = CollectionViewSource.GetDefaultView( Rows );
+						//View.Refresh();
+						//foreach(var name in expired)
+						//disconnectTimes.Remove( name );
+					}
+				}
+				else
+				{
+					InitializeAccountsDiff();
+
+					if(CopierMgr.IsActive)
+						CopierMgr.RefreshAccountsAfterReconnect();
+
+					if(CopierMgr.Master != null &&
+						!Account.All.Any( a => a.Name.Equals( CopierMgr.Master.Name, StringComparison.OrdinalIgnoreCase ) ))
+					{
+						ADLog.Write( "Master disconnected — clearing copier." );
+						CopierMgr.ClearAll();
+					}
+
+					MainGrid?.Dispatcher.InvokeAsync( () =>
+					{
+						foreach(var r in Rows.Where( x => added.Contains( x.AccountName ) ))
+						{
+							PulseRow( r, ADTheme.ConnectRow );
+						}
+					}, DispatcherPriority.Render );
+				}
+
+				prevAccounts = connected;
+
+				//MainGrid?.Dispatcher.InvokeAsync( () =>
+				//Application.Current?.Dispatcher.InvokeAsync( () =>
+				//{
+					View.Refresh();
+				//}, DispatcherPriority.Normal );
+			}
+			catch(Exception ex)
+			{
+				//Print( $"CheckConnections error: {ex.Message}" );
+				ADLog.Write( $"CheckConnections error: {ex.Message}" );
+			}
+		}
+
+
+		void CheckConnections__()
+		{
+			try
+			{
+				foreach(var r in Rows)
+				{
+					if(r.Acct == null) continue;
+					r.OnChanged( nameof( r.ConnStatus ) );
+				}
+
 				// current live connected accounts
 				var live = Account.All
-					.Where( a => a.ConnectionStatus == ConnectionStatus.Connected )
+					.Where( a => a.ConnectionStatus == ConnectionStatus.Connecting || a.ConnectionStatus == ConnectionStatus.Connected )
 					.Select( a => a.Name )
 					.ToHashSet( StringComparer.OrdinalIgnoreCase );
 
@@ -406,20 +893,22 @@ namespace NinjaTrader.AddOns
 				void DoReinitAndPulseAdds()
 				{
 					//Print( "DoReinitAndPulseAdds" );
-					InitializeAccounts();
-					Application.Current?.Dispatcher.Invoke( () =>
+
+					InitializeAccountsDiff();
+					//UninitializeAccounts();
+					//InitializeAccounts();
+
+					Application.Current?.Dispatcher.InvokeAsync( () =>
 					//SafeDispatchAsync( () =>
 					{
 						foreach(var r in Rows.Where( x => added.Contains( x.AccountName ) ))
 						{
 							PulseRow( r, ADTheme.ConnectRow );
 						}
-					}, DispatcherPriority.Normal );
+					}, DispatcherPriority.Render );
 
+					//Application.Current?.Dispatcher.InvokeAsync( () => View.Refresh() );
 					View.Refresh();
-
-					//ApplyGroupingSafe();
-					//View.Refresh();
 				}
 
 				if(removed.Count > 0)
@@ -698,13 +1187,13 @@ namespace NinjaTrader.AddOns
 								row.LastRealized = e.Value; 
 							}
                             break;
-                        case AccountItem.Commission:
+                        /*case AccountItem.Commission:
                             //if (Math.Abs(e.Value - row.LastComms) > EPS) 
 							{ 
 								row.Commissions = e.Value; 
 								row.LastComms = e.Value; 
 							}
-                            break;
+                            break;*/
 						case AccountItem.TrailingMaxDrawdown:
 							//if (Math.Abs(e.Value - row.LastComms) > EPS) 
 							{
@@ -712,15 +1201,30 @@ namespace NinjaTrader.AddOns
 								row.LastTrailingMaxDrawdown = e.Value;
 							}
 							break;
+						case AccountItem.NetLiquidation:
+							//if (Math.Abs(e.Value - row.LastComms) > EPS) 
+							{
+								row.NetLiq = e.Value;
+								row.LastNet = e.Value;
+							}
+							break;
 						default:
 							break;
                     }
-					var newNet = row.CashValue + row.Unrealized;
+
+					double comms = SafeGet( acct, AccountItem.Commission );
+					if(comms > 0)
+					{
+						Print( "On Item Update Comms: " + row.Commissions );
+						row.Commissions = comms;
+					}
+
+					/*var newNet = row.CashValue + row.Unrealized;
 					//if(Math.Abs( newNet - row.LastNet ) > EPS)
 					{
 						row.NetLiq = newNet;
 						row.LastNet = newNet;
-					}
+					}*/
 					var autoLiq = row.CashValue - row.TrailingMaxDrawdown;
 					//if(Math.Abs( newNet - row.LastNet ) > EPS)
 					{
@@ -730,11 +1234,11 @@ namespace NinjaTrader.AddOns
 
 					//RecalcSummaries();
 
-					EnforceRisk( row);
+					EnforceRisk(row);
                 }
                 catch (Exception ex) 
 				{ 
-					Print( $"OnAccountItemUpdate UI error: {ex.Message}" );
+					//Print( $"OnAccountItemUpdate UI error: {ex.Message}" );
 					ADLog.Write($"OnAccountItemUpdate UI error: {ex.Message}"); 
 				}
             }, DispatcherPriority.Normal);
@@ -755,7 +1259,28 @@ namespace NinjaTrader.AddOns
 
 			try
 			{
-				var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Position.Instrument );
+				double unrl = 0;
+				if(acct.Positions != null && acct.Positions.Count > 0)
+				{
+					unrl = acct.Positions.Sum( p => p.GetUnrealizedProfitLoss( PerformanceUnit.Currency ) );
+					int totalQty = acct.Positions.Sum( p => Math.Abs( p.Quantity ) );
+					var hasLong = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Long );
+					var hasShort = acct.Positions.Any( p => p.MarketPosition == MarketPosition.Short );
+
+					row.Pos = totalQty;
+					row.Qty = totalQty;
+					row.Dir = hasLong && hasShort ? (MarketPosition)(-999) :
+							  hasLong ? MarketPosition.Long :
+							  hasShort ? MarketPosition.Short :
+							  MarketPosition.Flat;
+				}
+				else
+				{
+					row.Dir = MarketPosition.Flat;
+					row.Pos = 0;
+					row.Qty = 0;
+				}
+				/*var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Position.Instrument );
 				if(pos != null)
 				{
 					row.Dir = pos.MarketPosition;
@@ -768,10 +1293,9 @@ namespace NinjaTrader.AddOns
 					row.Dir = MarketPosition.Flat;
 					row.Pos = 0;
 					row.Qty = 0;
-				}
+				}*/
 
-				double unrl = 0;
-				try { if(pos != null) unrl = pos.GetUnrealizedProfitLoss( PerformanceUnit.Currency ); } catch { }
+				//try { if(pos != null) unrl = pos.GetUnrealizedProfitLoss( PerformanceUnit.Currency ); } catch { }
 				if(Math.Abs( unrl - row.LastUnrl ) > EPS) 
 				{ 
 					row.Unrealized = unrl; row.LastUnrl = unrl; 
@@ -788,11 +1312,11 @@ namespace NinjaTrader.AddOns
 				//RecalcSummaries();
 
 				// Force UI update
-				//Application.Current?.Dispatcher?.InvokeAsync( () =>
-				//{
-				//	View.Refresh();
-				//}, DispatcherPriority.Normal );
-				View.Refresh();
+				Application.Current?.Dispatcher?.InvokeAsync( () =>
+				{
+					View.Refresh();
+				}, DispatcherPriority.Normal );
+				//View.Refresh();
 			}
 			catch(Exception ex) 
 			{
@@ -801,99 +1325,12 @@ namespace NinjaTrader.AddOns
 			}
 		}
 
-
-		void OnExecutionUpdate__( object sender, ExecutionEventArgs e )
+		private void OnExecutionUpdate( object sender, ExecutionEventArgs e )
 		{
-			if(e == null || e.Execution == null)
-				return;
-
-			try
-			{
-				var acct = sender as Account;
-				var row = Rows.FirstOrDefault( r => r.Acct == acct );
-				if(row == null)
-					return;
-
-				// Recalculate position quantity and direction
-				var pos = acct.Positions?.FirstOrDefault( p => p.Instrument == e.Execution.Instrument );
-				if(pos == null || pos.Quantity == 0)
-				{
-					row.Dir = MarketPosition.Flat;
-					row.Pos = 0;
-					//row.Qty = 0;
-				}
-				else
-				{
-					row.Dir = pos.MarketPosition;
-					row.Pos = Math.Abs( pos.Quantity );
-					//row.Qty = Math.Abs( pos.Quantity );
-				}
-
-				//Print( acct.Name + " -- " + row.Dir + ", " + row.Pos + ", " + row.Qty );
-
-				// Force UI update
-				Application.Current.Dispatcher.Invoke( () => View.Refresh() );
-			}
-			catch(Exception ex)
-			{
-				ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" );
-			}
+			if(e.Execution.Commission > 0)
+				Print( "OnExecution Comms: " + e.Execution.Commission );
 		}
 
-		void OnExecutionUpdate(object sender, ExecutionEventArgs e)
-        {
-            /*Account acct = sender as Account; if (acct == null) return;
-            var row = Rows.FirstOrDefault(r => r.Acct == acct); if (row == null) return;
-
-			//CopierMgr?.HandleExecutionUpdate( acct, e );
-			//try { Copier_OnExecutionUpdate( acct, e ); }
-			//catch(Exception ex) { ADLog.Write( $"OnExecutionUpdate error: {ex.Message}" ); }
-
-			Application.Current?.Dispatcher?.Invoke(() =>
-            {
-                try
-                {
-					var pos = acct.Positions?.FirstOrDefault(p => p.Instrument == e.Execution.Instrument);
-					if(pos != null)
-					{
-						row.Dir = pos.MarketPosition;
-						row.Pos = Math.Abs( pos.Quantity );
-						row.Qty = Math.Abs( pos.Quantity );
-					}
-					else
-					{
-						row.Dir = MarketPosition.Flat;
-						row.Pos = 0;
-						row.Qty = 0;
-					}
-
-                    double unrl = 0;
-                    try { if (pos != null) unrl = pos.GetUnrealizedProfitLoss(PerformanceUnit.Currency); } catch { }
-                    if (Math.Abs(unrl - row.LastUnrl) > EPS) { row.Unrealized = unrl; row.LastUnrl = unrl; }
-
-                    var newNet = row.CashValue + row.Unrealized;
-                    if (Math.Abs(newNet - row.LastNet) > EPS) { row.NetLiq = newNet; row.LastNet = newNet; }
-
-                    EnforceRisk(row);
-
-					// Force UI update
-					View.Refresh();
-				}
-				catch (Exception ex) { ADLog.Write($"OnExecutionUpdate UI error: {ex.Message}"); }
-            }, DispatcherPriority.Background);*/
-        }
-
-        // Copying of market orders will be handled in the Copier partial (stubbed here to keep signatures)
-        /*void OnOrderUpdate(object sender, OrderEventArgs e)
-        {
-			Account acct = sender as Account;
-
-			//Print( "ON ORDER CORE " + acct.Name );
-			//if( acct == CopierMgr.Master )
-				//CopierMgr?.HandleOrderUpdate( sender as Account, e );
-			//try { Copier_OnOrderUpdate(sender as Account, e); }
-            //catch (Exception ex) { ADLog.Write($"OnOrderUpdate error: {ex.Message}"); }
-        }*/
 
 		double SafeGet( Account a, AccountItem item )
 		{
@@ -949,56 +1386,115 @@ namespace NinjaTrader.AddOns
 
 		// Persistence (JSON via Newtonsoft)
 		internal void SaveSettings()
-        {
-            try
-            {
-                var data = new PersistModel
-                {
-                    Rows = Rows.Select(r => new PersistModel.RowCfg
-                    {
-                        Account = r.AccountName,
-                        Role = (int)r.Role,
-                        Hidden = r.Hidden,
-                        RiskEnabled = r.RiskEnabled,
-                        Size = r.Size,
-                        DailyGoal = r.DailyGoal,
-                        DailyLoss = r.DailyLoss,
-                        AutoLiq = r.AutoLiquidate,
-                        StartBalance = r.StartBalance,
-                        DayRealizedStart = r.DayRealizedStart
-                    }).ToArray()
-                };
-                File.WriteAllText(SettingsPath, JsonConvert.SerializeObject(data, Formatting.Indented));
-                ADLog.Write("Settings saved.");
-            }
-            catch (Exception ex) { ADLog.Write($"SaveSettings error: {ex.Message}"); }
-        }
+		{
+			try
+			{
+				var model = new PersistModel
+				{
+					WindowLeft = dash.Left,
+					WindowTop = dash.Top,
+					WindowWidth = dash.Width,
+					WindowHeight = dash.Height,
+					ShowSim = showSim,
+					CopierEnabled = copierEnabled,
+					GroupByConnectionEnabled = groupByConnectionEnabled,
+					Rows = Rows.Select( r => new PersistModel.RowCfg
+					{
+						Account = r.AccountName,
+						Role = (int)r.Role,
+						Hidden = r.Hidden,
+						RiskEnabled = r.RiskEnabled,
+						Size = r.Size,
+						DailyGoal = r.DailyGoal,
+						DailyLoss = r.DailyLoss,
+						AutoLiq = r.AutoLiquidate,
+						StartBalance = r.StartBalance,
+						DayRealizedStart = r.DayRealizedStart
+					} ).ToArray(),
+					Columns = MainGrid?.Columns.Select( c => new PersistModel.ColumnCfg
+					{
+						Header = c.Header?.ToString(),
+						Width = c.ActualWidth,
+						DisplayIndex = c.DisplayIndex,
+						Visible = c.Visibility == Visibility.Visible,
+						IsSorted = c.SortDirection.HasValue,
+						SortDirection = c.SortDirection
+					} ).ToList()
+				};
 
-        internal void LoadSettings()
-        {
-            try
-            {
-                if (!File.Exists(SettingsPath)) return;
-                var data = JsonConvert.DeserializeObject<PersistModel>(File.ReadAllText(SettingsPath));
-                if (data?.Rows == null) return;
+				Print( "Save settings: " + SettingsPath );
 
-                foreach (var cfg in data.Rows)
-                {
-                    var r = Rows.FirstOrDefault(x => x.AccountName == cfg.Account);
-                    if (r == null) continue;
-                    r.Role = (RowRole)cfg.Role;
-                    r.Hidden = cfg.Hidden;
-                    r.RiskEnabled = cfg.RiskEnabled;
-                    r.Size = cfg.Size;
-                    r.DailyGoal = cfg.DailyGoal;
-                    r.DailyLoss = cfg.DailyLoss;
-                    r.AutoLiquidate = cfg.AutoLiq;
-                    r.StartBalance = cfg.StartBalance;
-                    r.DayRealizedStart = cfg.DayRealizedStart;
-                }
-                ADLog.Write("Settings loaded.");
-            }
-            catch (Exception ex) { ADLog.Write($"LoadSettings error: {ex.Message}"); }
-        }
-    }
+				Directory.CreateDirectory( Path.GetDirectoryName( SettingsPath ) );
+				File.WriteAllText( SettingsPath, JsonConvert.SerializeObject( model, Formatting.Indented ) );
+				ADLog.Write( $"Settings saved: {SettingsPath}" );
+			}
+			catch(Exception ex)
+			{
+				ADLog.Write( $"SaveSettings error: {ex.Message}" );
+			}
+		}
+
+		internal void LoadSettings()
+		{
+			try
+			{
+				if(!File.Exists( SettingsPath )) return;
+
+				Print( "Load settings: " + SettingsPath );
+
+				var model = JsonConvert.DeserializeObject<PersistModel>( File.ReadAllText( SettingsPath ) );
+				if(model == null) return;
+
+				dash.Left = model.WindowLeft;
+				dash.Top = model.WindowTop;
+				dash.Width = model.WindowWidth;
+				dash.Height = model.WindowHeight;
+
+				showSim = model.ShowSim;
+				copierEnabled = model.CopierEnabled;
+				groupByConnectionEnabled = model.GroupByConnectionEnabled;
+
+				foreach(var cfg in model.Rows)
+				{
+					var row = Rows.FirstOrDefault( r => r.AccountName.Equals( cfg.Account, StringComparison.OrdinalIgnoreCase ) );
+					if(row == null) continue;
+					row.Role = (RowRole)cfg.Role;
+					row.Hidden = cfg.Hidden;
+					row.RiskEnabled = cfg.RiskEnabled;
+					row.Size = cfg.Size;
+					row.DailyGoal = cfg.DailyGoal;
+					row.DailyLoss = cfg.DailyLoss;
+					row.AutoLiquidate = cfg.AutoLiq;
+					row.StartBalance = cfg.StartBalance;
+					row.DayRealizedStart = cfg.DayRealizedStart;
+				}
+
+				if(model.Columns != null && MainGrid != null)
+				{
+					foreach(var colCfg in model.Columns)
+					{
+						var col = MainGrid.Columns.FirstOrDefault( c => c.Header?.ToString() == colCfg.Header );
+						if(col == null) continue;
+						col.Width = new DataGridLength( colCfg.Width );
+						col.DisplayIndex = colCfg.DisplayIndex;
+						col.Visibility = colCfg.Visible ? Visibility.Visible : Visibility.Collapsed;
+						col.SortDirection = colCfg.SortDirection;
+					}
+
+					MainGrid.Items.SortDescriptions.Clear();
+					foreach(var colCfg in model.Columns.Where( c => c.IsSorted ))
+					{
+						var dir = colCfg.SortDirection ?? ListSortDirection.Ascending;
+						MainGrid.Items.SortDescriptions.Add( new SortDescription( colCfg.Header, dir ) );
+					}
+				}
+
+				ADLog.Write( "Settings restored successfully." );
+			}
+			catch(Exception ex)
+			{
+				ADLog.Write( $"LoadSettings error: {ex.Message}" );
+			}
+		}
+	}
 }

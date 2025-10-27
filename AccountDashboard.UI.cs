@@ -1,4 +1,4 @@
-#region using
+﻿#region using
 using NinjaTrader.Cbi;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
@@ -108,7 +108,7 @@ namespace NinjaTrader.AddOns
 		NTMenuItem ccNewMenu;
 		NTMenuItem myMenuItem;
 
-		bool showSim = false; // track toggle state
+		bool showSim = true; // track toggle state
 		bool copierEnabled = false;
 
 		bool groupByConnectionEnabled = false;
@@ -122,10 +122,15 @@ namespace NinjaTrader.AddOns
 
 		public void Save( XDocument doc, XElement elem )
 		{
+			Print( "Workspace Save" );
 			bool open = dash != null && dash.IsVisible;
 			elem.SetAttributeValue( "IsOpen", open );
-			if(!open) return;
+			if(!open)
+			{
+				return;
+			}
 
+			Print( "Workspace Save Pos/Size" );
 			elem.SetAttributeValue( "Left", dash.Left );
 			elem.SetAttributeValue( "Top", dash.Top );
 			elem.SetAttributeValue( "Width", dash.Width );
@@ -134,8 +139,12 @@ namespace NinjaTrader.AddOns
 
 		public void Restore( XDocument doc, XElement elem )
 		{
+			Print( "Workspace Restore Pos/Size" );
+
 			bool shouldOpen = bool.TryParse( elem.Attribute( "IsOpen" )?.Value, out var v ) && v;
 			if(!shouldOpen) return;
+
+			Print( "Workspace Restore Window/Pos/Size" );
 
 			dash = new AccountDashboardWindow
 			{
@@ -174,6 +183,14 @@ namespace NinjaTrader.AddOns
 						Content = BuildUI()
 					};
 
+					//if(dash == null || !dash.IsVisible)
+					//{
+					//	Rows?.Clear();
+					//	Summaries?.Clear();
+					//}
+
+					LoadSettings();
+
 					dash.Loaded += ( s2, e2 ) =>
 					{
 						// HACK: Avoid that first connect pulse
@@ -189,19 +206,37 @@ namespace NinjaTrader.AddOns
 
 						// Populate and subscribe when the window actually opens
 						//Print( "Dash Loaded" );
-						InitializeAccounts();
+
+						UninitializeAccounts();
+						InitializeAccountsDiff();
+
+						// defer until grid is ready
+						dash.Dispatcher.InvokeAsync( () =>
+						{
+							View.Refresh();
+						}, DispatcherPriority.ContextIdle ); 
+						//LoadSettings();
 
 						//ApplyGroupingSafe();
-						//View.Refresh();
+						View.Refresh();
 					};
 
 					dash.Closed += ( s3, e3 ) =>
 					{
-						// Populate and subscribe when the window actually opens
-						//Print( "Dash Closed" );
+						SaveSettings();
+						// Stops timers and some other stuff. Important to stop timers before cleaning up
 						UninitializeAccounts();
+						Rows.Clear();
+						Summaries.Clear();
+						View = null;
+						CopierMgr.ClearAll();
+						prevAccounts.Clear();
+						addedAccounts.Clear();
 					};
+
 					dash.Show();
+
+					Print( "OnWindowCreated: Show" );
 				};
 				ccNewMenu.Items.Add( myMenuItem );
 			}
@@ -212,16 +247,24 @@ namespace NinjaTrader.AddOns
 			var cc = window as ControlCenter;
 			if(cc == null) return;
 
+			Print( "OnWindowDestroyed" );
+
+			//var menu = ccNewMenu;
 			var menu = cc.FindFirst( "ControlCenterMenuItemNew" ) as NTMenuItem;
 			if(menu != null && myMenuItem != null)
 				menu.Items.Remove( myMenuItem );
 
 			myMenuItem = null;
+			ccNewMenu = null;
+
+			Print( "OnWindowDestroyed END" );
 		}
 
 
 		UIElement BuildUI()
         {
+			Print( "BuildUI" );
+
 			var pnlBrush = new PnLBrushConverter();
             var posBg = new PosBackgroundConverter();
             var roleBg = new RoleRowBackgroundConverter();
@@ -233,10 +276,11 @@ namespace NinjaTrader.AddOns
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });           // spacer
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });           // summaries
 
+			root.SetValue( Control.FontFamilyProperty, new FontFamily( "Arial" ) );
+			//root.SetValue( Control.FontFamilyProperty, new FontFamily( "Segoe UI" ) );
 			//root.SetValue( Control.FontFamilyProperty, new FontFamily( "Lato" ) );
 			//root.SetValue( Control.FontFamilyProperty, new FontFamily( "Roboto" ) );
 			//root.SetValue( Control.FontFamilyProperty, new FontFamily( "Consolas" ) );
-			root.SetValue( Control.FontFamilyProperty, new FontFamily( "Segoe UI" ) );
 			root.SetValue( Control.FontSizeProperty, 13.0 );
 			root.SetValue( TextOptions.TextFormattingModeProperty, TextFormattingMode.Display );
 
@@ -275,7 +319,7 @@ namespace NinjaTrader.AddOns
 			}
 
 
-			var showAll = new Button { Content = "Show All", Margin = new Thickness(0, 0, 8, 0) };
+			var showAll = new Button { Content = "Show All Accounts", Margin = new Thickness(0, 0, 8, 0) };
             showAll.Click += (s, e) => { foreach (var r in Rows) r.Hidden = false; View.Refresh(); };
             var saveBtn = new Button { Content = "Save Settings", Margin = new Thickness(0, 0, 6, 0) };
             saveBtn.Click += (s, e) => SaveSettings();
@@ -297,9 +341,11 @@ namespace NinjaTrader.AddOns
 
 			bar.Children.Add( simToggle );
 
-			var groupToggle = new CheckBox { Content = "Group by Connection", Margin = new Thickness( 0, 0, 8, 0 ), Foreground = ADTheme.Fore };
-			groupToggle.Checked += ( s, e ) => { groupByConnectionEnabled = true; ApplyGroupingSafe(); };
-			groupToggle.Unchecked += ( s, e ) => { groupByConnectionEnabled = false; ApplyGroupingSafe(); };
+			var groupToggle = new CheckBox { Content = "Group by Connection", Margin = new Thickness( 0, 0, 8, 0 ), Foreground = ADTheme.Fore, IsChecked = groupByConnectionEnabled };
+			groupToggle.Checked += ( s, e ) => { groupByConnectionEnabled = true; SafeApplyGrouping(); };
+			groupToggle.Unchecked += ( s, e ) => { groupByConnectionEnabled = false; SafeApplyGrouping(); };
+			//groupToggle.Checked += ( s, e ) => { groupByConnectionEnabled = true; ApplyGroupingSafe(); };
+			//groupToggle.Unchecked += ( s, e ) => { groupByConnectionEnabled = false; ApplyGroupingSafe(); };
 			bar.Children.Add( groupToggle );
 
 
@@ -463,11 +509,46 @@ namespace NinjaTrader.AddOns
 			// replace the "-" header column
 			dg.Columns.Add( new DataGridTemplateColumn
 			{
-				Header = "-",
+				Header = new TextBlock
+				{
+					Text = "➖",
+					Name = "Role",
+					HorizontalAlignment = HorizontalAlignment.Center,
+					VerticalAlignment = VerticalAlignment.Center,
+					TextAlignment = TextAlignment.Center
+				},
 				CellTemplate = roleBtnTpl,
 				Width = 40
 			} );
 			//dg.Columns.Add(ButtonCol("-", "RoleButtonCmd", 40));
+
+
+			// --- Connection status circle ---
+			//
+			var connTpl = new DataTemplate();
+			var ellipse = new FrameworkElementFactory( typeof( Ellipse ) );
+			ellipse.SetValue( FrameworkElement.WidthProperty, 10.0 );
+			ellipse.SetValue( FrameworkElement.HeightProperty, 10.0 );
+			ellipse.SetValue( Shape.StrokeProperty, Brushes.DimGray );
+			ellipse.SetValue( Shape.StrokeThicknessProperty, 0.0 );
+			ellipse.SetBinding( Shape.FillProperty, new Binding( "ConnStatus" ) { Converter = new ConnectionStatusColorConverter() } );
+			connTpl.VisualTree = ellipse;
+
+			dg.Columns.Add( new DataGridTemplateColumn
+			{
+				Header = new TextBlock
+				{
+					Text = "○",
+					Name = "ConnStatus",
+					HorizontalAlignment = HorizontalAlignment.Center,
+					VerticalAlignment = VerticalAlignment.Center,
+					TextAlignment = TextAlignment.Center,
+					FontSize = 24
+				},
+				//Header = "",
+				CellTemplate = connTpl,
+				Width = 24
+			} );
 
 
 			// Account type color indicator
@@ -478,7 +559,6 @@ namespace NinjaTrader.AddOns
 			border.SetValue( Border.MarginProperty, new Thickness( 0 ) ); // new Thickness( 2, 0, 2, 0 ) );
 			border.SetValue( Border.WidthProperty, 6.0 );
 			border.SetValue( Border.HeightProperty, 24.0 );
-			//border.SetValue( Border.CornerRadiusProperty, new CornerRadius( 3 ) );
 
 			// background color depends on AccountName content
 			var bc = new Binding( "AccountName" )
@@ -488,11 +568,11 @@ namespace NinjaTrader.AddOns
 			border.SetBinding( Border.BackgroundProperty, bc );
 
 			// make header background transparent for specific columns
-			var transparentHeaderStyle = new Style( typeof( DataGridColumnHeader ) );
-			transparentHeaderStyle.Setters.Add( new Setter( Control.BackgroundProperty, Brushes.Transparent ) );
-			transparentHeaderStyle.Setters.Add( new Setter( Control.BorderBrushProperty, Brushes.Transparent ) );
-			transparentHeaderStyle.Setters.Add( new Setter( Control.ForegroundProperty, Brushes.Transparent ) );
-			transparentHeaderStyle.Setters.Add( new Setter( Control.HeightProperty, 24.0 ) );
+			//var transparentHeaderStyle = new Style( typeof( DataGridColumnHeader ) );
+			//transparentHeaderStyle.Setters.Add( new Setter( Control.BackgroundProperty, Brushes.Transparent ) );
+			//transparentHeaderStyle.Setters.Add( new Setter( Control.BorderBrushProperty, Brushes.Transparent ) );
+			//transparentHeaderStyle.Setters.Add( new Setter( Control.ForegroundProperty, Brushes.Transparent ) );
+			//transparentHeaderStyle.Setters.Add( new Setter( Control.HeightProperty, 24.0 ) );
 
 			typeTpl.VisualTree = border;
 			dg.Columns.Add( new DataGridTemplateColumn
@@ -506,9 +586,10 @@ namespace NinjaTrader.AddOns
 
 			// Account
 			dg.Columns.Add(TextReadOnlyCol("Account", "AccountName", 180));
+			//dg.Columns.Add( TextReadOnlyCol( "Display Name", "DisplayName", 180 ) );
 
-            // Hide toggle
-            /*var hideTpl = new DataTemplate();
+			// Hide toggle
+			/*var hideTpl = new DataTemplate();
             var hideBtn = new FrameworkElementFactory(typeof(CheckBox));
             hideBtn.SetValue(CheckBox.ContentProperty, "");
             hideBtn.SetBinding(CheckBox.IsCheckedProperty, new Binding("Hidden") { Mode = BindingMode.TwoWay });
@@ -517,11 +598,11 @@ namespace NinjaTrader.AddOns
             hideTpl.VisualTree = hideBtn;
             dg.Columns.Add(new DataGridTemplateColumn { Header = "Hide", CellTemplate = hideTpl, Width = 60 });*/
 
-            // Actions placeholder
-            //dg.Columns.Add(TextReadOnlyCol("Actions", "_", 90));
+			// Actions placeholder
+			//dg.Columns.Add(TextReadOnlyCol("Actions", "_", 90));
 
-            // Size dropdown 1..10
-            /***var multTpl = new DataTemplate();
+			// Size dropdown 1..10
+			/***var multTpl = new DataTemplate();
 			var cb = new FrameworkElementFactory( typeof( ComboBox ) );
 			cb.SetValue( ComboBox.BackgroundProperty, Brushes.Transparent );
 			cb.SetValue( ComboBox.BorderThicknessProperty, new Thickness( 0 ) );
@@ -562,14 +643,16 @@ namespace NinjaTrader.AddOns
 
 			var sizeTB = IntEditableCol( "Size", "Size", 40, TextAlignment.Center );
 			var cellStyle = new Style( typeof( DataGridCell ) );
-			cellStyle.Setters.Add( new Setter( UIElement.IsEnabledProperty, new Binding( "Role" ) { Converter = new RoleToEnabledConverter2() } ) );
+			cellStyle.Setters.Add( new Setter( UIElement.IsEnabledProperty, new Binding( "Role" ) { Converter = new RoleToEnabledSizeConverter() } ) );
 			sizeTB.CellStyle = cellStyle; 
 			dg.Columns.Add( sizeTB );
+
 
 
 			// Pos with background
 			var posTpl = new DataTemplate();
 			var posText = new FrameworkElementFactory(typeof(TextBlock));
+			posText.SetBinding( UIElement.OpacityProperty, new Binding( "Pos" ) { Converter = new IntToOpacityConverter() } );
 			posText.SetBinding(TextBlock.TextProperty, new Binding("Pos" ) );
 			posText.SetValue( TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center );
 			posText.SetValue(TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center);
@@ -591,9 +674,10 @@ namespace NinjaTrader.AddOns
 			dg.Columns.Add(MoneyCol("Unrealized", "Unrealized", true));
             dg.Columns.Add(MoneyCol("Realized", "Realized", true));
 			dg.Columns.Add( MoneyCol( "Total P&L", "TotalPnL", true ) );
-			//dg.Columns.Add(MoneyCol("Commissions", "Commissions", false));
+			dg.Columns.Add(MoneyCol("Commissions", "Commissions", false));
 			dg.Columns.Add(MoneyCol("Cash Value", "CashValue", false));
-            //dg.Columns.Add(MoneyCol("Net Liquidation", "NetLiq", false));
+			//dg.Columns.Add(MoneyCol("Net Liquidation", "NetLiq", false));
+			//dg.Columns.Add( MoneyCol( "Liquidate At", "LiquidateMoment", false ) );
 			dg.Columns.Add( MoneyCol( "Max Drawdown", "TrailingMaxDrawdown", false ) );
 			//dg.Columns.Add(MoneyCol("From Funded", "FromFunded", true));
 			//dg.Columns.Add(MoneyCol("Auto Liquidate", "AutoLiquidate", false));
@@ -604,6 +688,7 @@ namespace NinjaTrader.AddOns
 			//
             dg.Columns.Add(MoneyEditableCol("Daily Loss", "DailyLoss"));
             dg.Columns.Add(MoneyEditableCol("Daily Goal", "DailyGoal"));
+
 
             // Risk column with header toggle
 			//
@@ -618,9 +703,10 @@ namespace NinjaTrader.AddOns
 			chk.SetValue( CheckBox.HorizontalAlignmentProperty, HorizontalAlignment.Left );
 			chk.SetValue( CheckBox.VerticalAlignmentProperty, VerticalAlignment.Center );
 			chk.SetValue( CheckBox.PaddingProperty, new Thickness( 6, 0, 6, 0 ) );
-			riskTpl.VisualTree = chk;			
-			var headerToggle = new CheckBox { Content = "Risk", FontSize = 13.0, FontWeight = FontWeights.SemiBold };
+			riskTpl.VisualTree = chk;
+			var headerToggle = new CheckBox { Content = "Risk", Name = "Risk", FontSize = 14.0, FontWeight = FontWeights.SemiBold, Foreground = ADTheme.Fore };
 			// Weird 1 padding to align header with the rest
+			headerToggle.Focusable = false;
 			headerToggle.SetValue( CheckBox.PaddingProperty, new Thickness( 1, 0, 0, 0 ) );
 			headerToggle.Checked += (s, e) => Rows.ToList().ForEach(r => r.RiskEnabled = true);
             headerToggle.Unchecked += (s, e) => Rows.ToList().ForEach(r => r.RiskEnabled = false);
@@ -677,6 +763,21 @@ namespace NinjaTrader.AddOns
 			sum.MinRowHeight = 24;
 			sum.RowHeight = 24;
 
+			sum.Columns.Add( new DataGridTemplateColumn
+			{
+				Header = new TextBlock
+				{
+					Text = "",
+					Name = "ConnStatusSum",
+					HorizontalAlignment = HorizontalAlignment.Center,
+					VerticalAlignment = VerticalAlignment.Center,
+					TextAlignment = TextAlignment.Center
+				},
+				//CellTemplate = connTpl,
+				Width = 24
+			} );
+
+
 			sum.Columns.Add( IntReadOnlyCol( "Accounts", "AccountCount", 40, TextAlignment.Center));
 
 			sum.Columns.Add( new DataGridTemplateColumn
@@ -688,13 +789,15 @@ namespace NinjaTrader.AddOns
 				//HeaderStyle = transparentHeaderStyle,
 			} );
 
-            sum.Columns.Add(TextReadOnlyCol("Connection", "Label", 180 ) );
+			sum.Columns.Add(TextReadOnlyCol("Connection", "Label", 180 ) );
+			//sum.Columns.Add( TextReadOnlyCol( "Display Name", "DisplayName", 180 ) );
 			sum.Columns.Add(TextReadOnlyCol( "Size", "-", 40 ));
 
 
 			// Pos with background
 			var posTplS = new DataTemplate();
 			var posTextS = new FrameworkElementFactory( typeof( TextBlock ) );
+			posTextS.SetBinding( UIElement.OpacityProperty, new Binding( "TotalPos" ) { Converter = new IntToOpacityConverter() } );
 			posTextS.SetBinding( TextBlock.TextProperty, new Binding( "TotalPos" ) );
 			posTextS.SetValue( TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center );
 			posTextS.SetValue( TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center );
@@ -716,7 +819,7 @@ namespace NinjaTrader.AddOns
 			sum.Columns.Add(MoneyCol("Unrealized", "TotalUnrealized", true));
             sum.Columns.Add(MoneyCol("Realized", "TotalRealized", true));
 			sum.Columns.Add(MoneyCol("Total PNL", "TotalPnL", true));
-            //sum.Columns.Add(MoneyCol("Commissions", "TotalComms", false));
+            sum.Columns.Add(MoneyCol("Commissions", "TotalComms", false));
             sum.Columns.Add(MoneyCol("Cash Value", "TotalCash", false));
 			//sum.Columns.Add(MoneyCol("Net Liq", "TotalNetLiq", false));
 			//sum.Columns.Add( MoneyCol( "Max Drawdown", "-", false ) );
@@ -731,6 +834,58 @@ namespace NinjaTrader.AddOns
 
 			// must be the same ObservableCollection<AccountRow> used in InitializeAccounts()
 			dg.ItemsSource = Rows;
+
+
+			// Keep a ref to main grid
+			MainGrid = dg;
+
+
+			// Add context menu to maingrid column header to show/hide
+			//
+			var headerMenu = new ContextMenu();
+			foreach(var col in MainGrid.Columns)
+			{
+				var item = new MenuItem { Header = col.Header?.ToString(), IsCheckable = true, IsChecked = col.Visibility == Visibility.Visible };
+				CheckBox cb = col.Header as CheckBox;
+				TextBlock tb = col.Header as TextBlock;
+				// Risk CheckBox
+				if(  cb != null )
+				{
+					item.Header = cb.Name;
+					item.Click += ( s, e ) =>
+					{
+						col.Visibility = item.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+					};
+					headerMenu.Items.Add( item );
+				}
+				else if(tb != null)
+				{
+					item.Header = tb.Name;
+					item.Click += ( s, e ) =>
+					{
+						col.Visibility = item.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+					};
+					headerMenu.Items.Add( item );
+				}
+				else if(!string.IsNullOrEmpty( col.Header?.ToString() ))
+				{
+					item.Click += ( s, e ) =>
+					{
+						col.Visibility = item.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+					};
+					headerMenu.Items.Add( item );
+				}
+			}
+			MainGrid.ContextMenu = headerMenu;
+			//MainGrid.ContextMenuOpening += ( s, e ) => { headerMenu.Items.Clear(); /* rebuild items as above */ };
+
+			var showCols = new Button { Content = "Show All Columns", Margin = new Thickness( 0, 0, 8, 0 ) };
+			showCols.Click += ( s, e ) =>
+			{
+				foreach(var c in MainGrid.Columns)
+					c.Visibility = Visibility.Visible;
+			};
+			bar.Children.Add( showCols );
 
 
 			// after setting ItemsSource
@@ -811,11 +966,6 @@ namespace NinjaTrader.AddOns
 					foreach(AccountRow r in e.OldItems)
 						r.PropertyChanged -= roleWatcher;
 			};
-
-
-			// Keep a ref to main grid
-			MainGrid = dg;
-
 
 			// Align main and summary grid's resizing
 			for(int i = 0; i < dg.Columns.Count && i < sum.Columns.Count; i++)
@@ -911,7 +1061,7 @@ namespace NinjaTrader.AddOns
 			// Edit mode (TextBox)
 			var editStyle = new Style( typeof( TextBox ) );
 			editStyle.Setters.Add( new Setter( TextBox.TextAlignmentProperty, halign ) );
-			editStyle.Setters.Add( new Setter( TextBlock.HorizontalAlignmentProperty, HorizontalAlignment.Center ) );
+			editStyle.Setters.Add( new Setter( TextBox.HorizontalAlignmentProperty, HorizontalAlignment.Center ) );
 			editStyle.Setters.Add( new Setter( TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center ) );
 			editStyle.Setters.Add( new Setter( Control.PaddingProperty, new Thickness( 6, 0, 6, 0 ) ) );
 			editStyle.Setters.Add( new Setter( Control.BackgroundProperty, new SolidColorBrush( Color.FromRgb( 40, 40, 40 ) ) ) ); // dark edit background
@@ -922,15 +1072,16 @@ namespace NinjaTrader.AddOns
 			return col;
 		}
 
-		DataGridTextColumn IntCol(string header, string path, double width)
+		DataGridTextColumn IntCol(string header, string path, double width, TextAlignment halign = TextAlignment.Left )
         {
             var col = new DataGridTextColumn { Header = header, Binding = new Binding(path), Width = width };
             var style = new Style(typeof(TextBlock));
-            style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Left));
+            style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, halign ));
 			style.Setters.Add( new Setter( TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center ) );
 			//style.Setters.Add( new Setter( TextBlock.TextAlignmentProperty, TextAlignment.Right ) );
 			col.ElementStyle = style; return col;
         }
+
 		DataGridTextColumn IntReadOnlyCol( string header, string path, double width, TextAlignment halign = TextAlignment.Left )
 		{
 			var col = new DataGridTextColumn { Header = header, Binding = new Binding( path ), Width = width, IsReadOnly = true };
@@ -942,8 +1093,8 @@ namespace NinjaTrader.AddOns
 			col.ElementStyle = style; return col;
 		}
 
-		DataGridTextColumn MoneyCol(string header, string path, bool colored)
-        {
+		DataGridTextColumn MoneyCol(string header, string path, bool colored, TextAlignment halign = TextAlignment.Left )
+		{
 			var col = new DataGridTextColumn
 			{
 				Header = header,
@@ -952,7 +1103,7 @@ namespace NinjaTrader.AddOns
 				IsReadOnly = true
 			};
             var style = new Style(typeof(TextBlock));
-            style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Left));
+            style.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, halign));
 			style.Setters.Add( new Setter( TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center ) );
 			//style.Setters.Add( new Setter( TextBlock.TextAlignmentProperty, TextAlignment.Right ) );
 			style.Setters.Add( new Setter( TextBlock.PaddingProperty, new Thickness( 6, 0, 6, 0 ) ) );
@@ -960,8 +1111,8 @@ namespace NinjaTrader.AddOns
             col.ElementStyle = style;
             return col;
         }
-        DataGridTextColumn MoneyEditableCol(string header, string path)
-        {
+        DataGridTextColumn MoneyEditableCol(string header, string path, TextAlignment halign = TextAlignment.Left )
+		{
             var col = new DataGridTextColumn
             {
                 Header = header,
@@ -969,14 +1120,14 @@ namespace NinjaTrader.AddOns
                 Width = 120
             };
 			var style = new Style( typeof( TextBlock ) );
-			style.Setters.Add( new Setter( TextBlock.TextAlignmentProperty, TextAlignment.Left ) );
+			style.Setters.Add( new Setter( TextBlock.TextAlignmentProperty, halign ) );
 			style.Setters.Add( new Setter( TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center ) );
 			style.Setters.Add( new Setter( TextBlock.PaddingProperty, new Thickness( 6, 0, 6, 0 ) ) );
 			col.ElementStyle = style;
 
 			// Edit mode (TextBox)
 			var editStyle = new Style( typeof( TextBox ) );
-			editStyle.Setters.Add( new Setter( TextBox.TextAlignmentProperty, TextAlignment.Left ) );
+			editStyle.Setters.Add( new Setter( TextBox.TextAlignmentProperty, halign ) );
 			editStyle.Setters.Add( new Setter( TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center ) );
 			editStyle.Setters.Add( new Setter( Control.PaddingProperty, new Thickness( 4, 0, 6, 0 ) ) );
 			editStyle.Setters.Add( new Setter( Control.BackgroundProperty, new SolidColorBrush( Color.FromRgb( 40, 40, 40 ) ) ) ); // dark edit background
@@ -985,6 +1136,7 @@ namespace NinjaTrader.AddOns
 			col.EditingElementStyle = editStyle;
 			return col;
         }
+
         DataGridTemplateColumn ButtonCol(string header, string commandPath, double width)
         {
             var tpl = new DataTemplate();
@@ -999,14 +1151,13 @@ namespace NinjaTrader.AddOns
 		{
 			public object Convert( object value, Type t, object p, CultureInfo c )
 			{
-				if( value is RowRole)
+				if(value is RowRole rr)
 				{
-					var rr = (RowRole)value;
-					if(rr == RowRole.Master) return "M";
-					else if(rr == RowRole.Follower) return "F";
+					if(rr == RowRole.Master) return "👑"; // "M";
+					else if(rr == RowRole.Follower) return "F"; // "🤖";
 				}
-				return "";
-				//return value is RowRole rr ? rr == RowRole.Master ? "M" : rr == RowRole.Follower ? "F" : "" : "";
+				//return "➖";
+				return string.Empty;
 			}
 			public object ConvertBack( object v, Type t, object p, CultureInfo c ) => null;
 		}

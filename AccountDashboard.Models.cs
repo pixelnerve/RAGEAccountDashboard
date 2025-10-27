@@ -1,15 +1,19 @@
 #region using
 using NinjaTrader.Cbi;
+using NinjaTrader.NinjaScript;
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 
 #endregion
@@ -18,8 +22,62 @@ namespace NinjaTrader.AddOns
 {
     public enum RowRole { None, Master, Follower }
 
-    // Simple logger
-    internal static class ADLog
+	// Simple logger
+	internal static class ADLog
+	{
+		public static int FlushTimerThresholdMS = 1000;
+		public static int FlushMessagesThreshold = 50;
+		static readonly object _lock = new();
+		static readonly Queue<string> buffer = new();
+		static System.Threading.Timer flushTimer;
+		static string path;
+
+		public static string LogFilePath
+		{
+			get => path;
+			set
+			{
+				path = value;
+				flushTimer ??= new System.Threading.Timer( _ => Flush(), null, FlushTimerThresholdMS, FlushTimerThresholdMS ); // every 1s
+			}
+		}
+
+		public static void Write( string msg )
+		{
+			if(path == null) return;
+			lock(buffer)
+			{
+				buffer.Enqueue( $"[{DateTime.Now:HH:mm:ss.fff}] {msg}" );
+				if(buffer.Count >= FlushMessagesThreshold) // threshold
+					Flush();
+			}
+		}
+
+		static void Flush()
+		{
+			string[] lines;
+			lock(buffer)
+			{
+				if(buffer.Count == 0) return;
+				lines = buffer.ToArray();
+				buffer.Clear();
+			}
+
+			try
+			{
+				foreach(string line in lines)
+				{
+					NinjaTrader.Code.Output.Process( $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}]  {line}\r\n", PrintTo.OutputTab1 );
+				}
+				System.IO.File.AppendAllLines( path, lines );
+			}
+			catch(Exception ex) {
+				NinjaTrader.Code.Output.Process( $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}]  ERROR: {ex.Message}\r\n", PrintTo.OutputTab1 );
+			}
+		}
+	}
+
+	/*internal static class ADLog
     {
         private static readonly object _lock = new object();
         public static string LogFilePath { get; set; }
@@ -27,13 +85,17 @@ namespace NinjaTrader.AddOns
         {
             try
             {
-                lock (_lock)
-                    System.IO.File.AppendAllText(LogFilePath,
-                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {msg}\r\n");
+				NinjaTrader.Code.Output.Process( $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}]  {msg}\r\n", PrintTo.OutputTab1 );
+				//lock(_lock)
+				//{
+					//System.IO.File.AppendAllText( LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}]  {msg}\r\n" );
+				//}
             }
-            catch { /* ignore */ }
+            catch { 
+				// ignore
+			}
         }
-    }
+    }*/
 
     // Brushes and colors in one place
     internal static class ADTheme
@@ -87,23 +149,60 @@ namespace NinjaTrader.AddOns
         public object ConvertBack(object v, Type t, object p, CultureInfo c) => null;
     }
 
+	public sealed class ConnectionStatusColorConverter : IValueConverter
+	{
+		public object Convert( object value, Type targetType, object parameter, CultureInfo culture )
+		{
+			if(value is ConnectionStatus s)
+			{
+				return s == ConnectionStatus.Connected
+					? new SolidColorBrush( Color.FromRgb( 0x2E, 0xC4, 0x44 ) )   // green
+					: s == ConnectionStatus.Connecting
+					? new SolidColorBrush( Color.FromRgb( 0xE5, 0xA3, 0x3E ) )   // orange
+					: new SolidColorBrush( Color.FromRgb( 0xE5, 0x3E, 0x3E ) );  // red
+			}
+			return Brushes.Gray;
+		}
+
+		public object ConvertBack( object value, Type targetType, object parameter, CultureInfo culture ) => null;
+	}
+
 	public sealed class AccountTypeColorConverter : IValueConverter
 	{
 		public object Convert( object value, Type targetType, object parameter, CultureInfo culture )
 		{
+
 			if(value is string name)
 			{
+				string[] PropFundedCodes = { "MFFUSF", "TPTPRO", "TAKEPROFITPRO", "LTD", "PAAPEX", "FTDFYG", "FTPROPLUSM", "FTZEROM" };
+				string[] PropEvalCodes   = { "MFFUEV", "TPT", "TAKEPROFIT", "LTE", "APEX", "TDFYG", "FTPROPLUS", "FFN-" };
+
 				name = name.ToUpperInvariant();
-				if(name.Contains( "SF" ) || name.Contains( "LTD" ) || name.Contains( "TAKEPROFITPRO" ))
+
+				// Check funded first
+				if(PropFundedCodes.Any( code => name.StartsWith( code, StringComparison.OrdinalIgnoreCase ) ))
+				{
 					return new SolidColorBrush( Color.FromRgb( 0x2E, 0xC4, 0x44 ) ); // green
-				else if(name.StartsWith( "Sim", StringComparison.InvariantCultureIgnoreCase ) )
+				}
+				// Check for sim accounts
+				else if(name.StartsWith( "Sim", StringComparison.OrdinalIgnoreCase ))
+				{
 					return new SolidColorBrush( Color.FromRgb( 0xAF, 0xAF, 0x44 ) ); // yellow
+				}
+				// Default we assume are evals
 				return new SolidColorBrush( Color.FromRgb( 0x77, 0x77, 0x77 ) ); // light gray
 			}
 			return Brushes.Transparent;
 		}
 
 		public object ConvertBack( object value, Type targetType, object parameter, CultureInfo culture ) => null;
+	}
+
+	public sealed class IntToOpacityConverter : IValueConverter
+	{
+		public object Convert( object v, Type t, object p, CultureInfo c ) =>
+			v is int i && i == 0 ? 0.5 : 1.0;
+		public object ConvertBack( object v, Type t, object p, CultureInfo c ) => null;
 	}
 
 	public sealed class PosBackgroundConverter : IValueConverter
@@ -148,12 +247,14 @@ namespace NinjaTrader.AddOns
 			=> throw new NotImplementedException();
 	}
 
-	public sealed class RoleToEnabledConverter2 : IValueConverter
+	public sealed class RoleToEnabledSizeConverter : IValueConverter
 	{
 		public object Convert( object value, Type targetType, object parameter, CultureInfo culture )
 		{
-			if(value is RowRole role)
-				return role != RowRole.Master; 
+			// Only enable Size for followers
+			//if(value is RowRole role) return role == RowRole.Follower;
+			// Disable for Master account
+			if(value is RowRole role) return role != RowRole.Master;
 			return true;
 		}
 
@@ -172,7 +273,7 @@ namespace NinjaTrader.AddOns
         public object ConvertBack(object v, Type t, object p, CultureInfo c) => null;
     }
 
-    public sealed class MultToIndexConverter : IValueConverter
+	public sealed class MultToIndexConverter : IValueConverter
     {
         public object Convert(object v, Type t, object p, CultureInfo c)
         { int mult = v is int i ? i : 1; return Math.Max(0, Math.Min(9, mult - 1)); } // 1..10 -> 0..9
@@ -185,10 +286,27 @@ namespace NinjaTrader.AddOns
     {
         public Account Acct { get; }
         public string AccountName => Acct?.Name ?? "";
-        public string ConnectionName => GetConnName(Acct);
 
+		// new display-friendly name (hide long numeric IDs)
+		public string DisplayName
+		{
+			get
+			{
+				var name = AccountName ?? "";
+				var prefix = Regex.Match( name, @"^[^\d]+" ).Value;
+				return prefix + name.Substring( name.Length - 3, 3);
+				// replace any contiguous run of 10 (or change number) or more digits with a single "-"
+				//return Regex.Replace( name, @"\b\d{6}\b", "-" );
+				// if you want to replace exactly 10-digit chunks use @"\d{10}"
+				// if you want to mask with " - " use Regex.Replace(name, @"\d{10,}", " - ");
+			}
+		}
+
+		public string ConnectionName => GetConnName(Acct);
         public RowRole Role { get => _role; set { _role = value; OnChanged(); } }
-        public bool Hidden { get => _hidden; set { _hidden = value; OnChanged(); } }
+		public ConnectionStatus ConnStatus => Acct?.ConnectionStatus ?? ConnectionStatus.Disconnected;
+
+		public bool Hidden { get => _hidden; set { _hidden = value; OnChanged(); } }
         public bool RiskEnabled { get => _riskEnabled; set { _riskEnabled = value; OnChanged(); } }
 
 		public MarketPosition Dir
@@ -221,8 +339,9 @@ namespace NinjaTrader.AddOns
 		public double TrailingMaxDrawdown { get => _maxdd; set { _maxdd = value; OnChanged(); } }
 		public double CashValue { get => _cash; set { _cash = value; OnChanged(); } }
         public double NetLiq { get => _net; set { _net = value; OnChanged(); } }
+		public double LiquidateMoment => CashValue - TrailingMaxDrawdown;
 
-        public double FromFunded => NetLiq - StartBalance;
+		public double FromFunded => NetLiq - StartBalance;
         public double AutoLiquidate { get => _autoLiq; set { _autoLiq = value; OnChanged(); } }
         public double FromClosed => Realized - DayRealizedStart;
         public double FromLoss => Math.Min(0, TotalPnL);
@@ -284,7 +403,7 @@ namespace NinjaTrader.AddOns
 
         public event PropertyChangedEventHandler PropertyChanged;
         //void OnChanged([CallerMemberName] string n = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n));
-		protected void OnChanged( [CallerMemberName] string name = null )
+		public void OnChanged( [CallerMemberName] string name = null )
 		{
 			PropertyChanged?.Invoke( this, new PropertyChangedEventArgs( name ) );
 		}
@@ -316,7 +435,7 @@ namespace NinjaTrader.AddOns
 					OnChanged( nameof( TotalPos ) ); // ensure converter reevaluates
 			}
 		}
-		public double TotalPos
+		public int TotalPos
 		{
 			get => _pos;
 			set
@@ -337,8 +456,11 @@ namespace NinjaTrader.AddOns
 			}
 		}*/
 
-		string _label; int _count;
-		double _pos, _u, _r, _c, _n, _m; //, _size;
+		string _label; 
+		int _count;
+		int _pos;
+		double _u, _r, _c, _n, _m; //, _size;
+
 		MarketPosition _dir = MarketPosition.Flat;
 
 		public event PropertyChangedEventHandler PropertyChanged;
